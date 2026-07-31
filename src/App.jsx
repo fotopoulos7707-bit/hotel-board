@@ -32,9 +32,11 @@ function stayToDb(stay) {
   };
 }
 
+
+
 const STAYS_KEY = 'hotel-stays-v1';
 const ROOMS_KEY = 'hotel-rooms-v1';
-const ROLE_KEY = 'hotel-role-pref-v1';
+
 const HEADER_HEIGHT = 52;
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -214,17 +216,9 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
 }
 
 export default function App() {
-  useEffect(() => {
-  async function test() {
-    const response = await supabase
-      .from("stays")
-      .select("*");
+  
 
-    
-  }
-
-  test();
-}, []);
+  const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   
@@ -249,6 +243,8 @@ export default function App() {
   const [lastSynced, setLastSynced] = useState(null);
   const [storageOK, setStorageOK] = useState(true);
 
+  
+
   useEffect(() => {
     function onResize() { setIsMobile(window.innerWidth < 700); }
     window.addEventListener('resize', onResize);
@@ -256,35 +252,43 @@ export default function App() {
   }, []);
 
   const loadData = useCallback(async () => {
-    setSyncing(true);
-    const roomsRaw = await safeGet(ROOMS_KEY, true);
-    const { data, error } = await supabase
-    .from("stays")
-    .select("*");
+  setSyncing(true);
 
-    if (error) {
-    console.error(error);
-    return;
-    }
+  try {
+    const roomsRaw = await safeGet(ROOMS_KEY, true);
+
+    const { data, error } = await supabase
+      .from("stays")
+      .select("*");
+
+    if (error) throw error;
 
     const staysRaw = data.map(dbToStay);
-    
+
     let r = roomsRaw ? JSON.parse(roomsRaw) : null;
     let s = staysRaw;
     let ok = true;
-    
-    // Always fall back to defaultRooms layout structure if it doesn't match the required group sizing structure
-    if (!r || !r[0]?.size) { r = defaultRooms; ok = await safeSet(ROOMS_KEY, JSON.stringify(r), true); }
-    if (!s) {
-    s = [];
-}
-    
+
+    if (!r || !r[0]?.size) {
+      r = defaultRooms;
+      ok = await safeSet(ROOMS_KEY, JSON.stringify(r), true);
+    }
+
+    if (!s) s = [];
+
     setRooms(r);
     setStays(s);
     setStorageOK(ok !== false);
     setLastSynced(new Date());
+
+  } catch (err) {
+    console.error(err);
+  } finally {
     setSyncing(false);
-  }, []);
+    setLoading(false);
+  }
+
+}, []);
 
   useEffect(() => {
   const channel = supabase
@@ -352,20 +356,6 @@ export default function App() {
   loadProfile();
   }, [user]);
 
-  useEffect(() => {
-  if (!profile) return;
-
-  setRole(profile.role);
-  }, [profile]);
-
-  useEffect(() => {
-    (async () => {
-      const v = await safeGet(ROLE_KEY, false);
-      if (v === 'admin' || v === 'staff') setRole(v);
-    })();
-  }, []);
-
-  function changeRole(r) { setRole(r); safeSet(ROLE_KEY, r, false); }
 
   async function persistStays(next) {
   setStays(next);
@@ -550,6 +540,14 @@ export default function App() {
                   if (idx >= 0 && idx <= numDays) turnovers.push(idx);
                 }
               }
+              
+              if (loading) {
+                return (
+                  <div className="flex h-screen items-center justify-center text-xl">
+                    Loading...
+                  </div>
+                );
+              }
 
               return (
                 <div key={room.id} className="flex border-b border-stone-200" style={{ height: rowHeight }}>
@@ -569,7 +567,7 @@ export default function App() {
                         return (
                           <div
                             key={iso}
-                            onClick={role === 'admin' ? () => openAddModal(room.id, iso) : undefined}
+                            onClick={canCreate ? () => openAddModal(room.id, iso) : undefined}
                             className={`h-full border-l border-stone-200 ${isToday ? 'bg-amber-50' : isWeekend ? 'bg-stone-50' : 'bg-white'} ${role === 'admin' ? 'cursor-pointer hover:bg-stone-100' : ''}`}
                             style={{ width: colWidth, flexShrink: 0 }}
                           />

@@ -108,7 +108,7 @@ function getStayLook(stay, todayISO) {
 }
 
 function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete, onClose }) {
-  const isStaff = role === 'staff';
+  const canEditModal = role === 'admin';
   const isBlocked = draft.type === 'blocked';
 
   function field(key, value) { setDraft({ ...draft, [key]: value }); }
@@ -118,21 +118,20 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
           <h2 className="font-serif text-lg font-semibold text-stone-900">
-            {isStaff ? 'Stay details' : mode === 'add' ? 'New stay' : 'Edit stay'}
+            {!canEditModal ? 'Stay details' : mode === 'add' ? 'New stay' : 'Edit stay'}
           </h2>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
             <X size={20} />
           </button>
         </div>
 
-        {isStaff ? (
+        {!canEditModal ? (
           <div className="px-5 py-4 space-y-3 text-sm">
-            <div><span className="text-stone-500">Δωμάτιο</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name}</div></div>
+            <div><span className="text-stone-500">Room ID</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
             <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Guest'}</span><div className="font-medium">{draft.guestName}</div></div>
             {!isBlocked && <div><span className="text-stone-500">Πελάτες</span><div className="font-medium">{draft.pax}</div></div>}
             <div><span className="text-stone-500">Check-in</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
             <div><span className="text-stone-500">Check-out</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
-            {draft.notes && <div><span className="text-stone-500">Notes</span><div className="font-medium">{draft.notes}</div></div>}
           </div>
         ) : (
           <div className="px-5 py-4 space-y-3">
@@ -194,16 +193,16 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
         )}
 
         <div className="flex items-center justify-between px-5 py-4 border-t border-stone-200">
-          {!isStaff && mode === 'edit' ? (
+          {canEditModal && mode === 'edit' ? (
             <button onClick={onDelete} className="flex items-center gap-1 text-rose-600 text-sm font-medium hover:text-rose-700">
               <Trash2 size={15} /> Delete
             </button>
           ) : <span />}
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
-              {isStaff ? 'Close' : 'Cancel'}
+              {canEditModal ? 'Cancel' : 'Close'}
             </button>
-            {!isStaff && (
+            {canEditModal && (
               <button onClick={onSave} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
                 Save
               </button>
@@ -382,7 +381,7 @@ export default function App() {
 }
 
   function openAddModal(roomId, dateISO) {
-    if (role !== 'admin') return;
+    if (!canCreate) return;
     setModal({
       mode: 'add',
       draft: { id: null, roomId, type: 'stay', guestName: '', phone: '', email: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
@@ -401,6 +400,10 @@ export default function App() {
 
   function handleSave() {
     const d = modal.draft;
+    if (d.id ? !canEdit : !canCreate) {
+      setModalError('You do not have permission to make this change.');
+      return;
+    }
     if (!d.guestName || !d.guestName.trim()) {
       setModalError(d.type === 'blocked' ? 'Reason is required.' : 'Το όνομα του πελάτη είναι υποχρεωτικό.');
       return;
@@ -422,6 +425,7 @@ export default function App() {
   }
 
   function handleDelete() {
+    if (!canDelete) return;
     if (!modal.draft.id) return;
     persistStays(stays.filter(s => s.id !== modal.draft.id));
     closeModal();

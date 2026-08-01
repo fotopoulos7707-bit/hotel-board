@@ -506,7 +506,7 @@ export default function App() {
 
         {!storageOK && (
           <div className="mb-3 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
-            Changes aren't syncing right now &mdash; storage is unavailable. Edits made here may not reach other devices.
+            Work in progress - Not final version
           </div>
         )}
 

@@ -38,6 +38,7 @@ const STAYS_KEY = 'hotel-stays-v1';
 const ROOMS_KEY = 'hotel-rooms-v1';
 
 const HEADER_HEIGHT = 52;
+const SECTION_LABEL_HEIGHT = 32;
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function toISO(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
@@ -53,6 +54,7 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 
 // Custom rooms grouped by square meters: 40m^2, 60m^2, then 80m^2
 const defaultRooms = [
+  // Karayiannis Villas
   // 40m^2 Group
   { id: 12, name: '12', size: '40m²' },
   { id: 14, name: '14', size: '40m²' },
@@ -67,21 +69,16 @@ const defaultRooms = [
   { id: 23, name: '23', size: '60m²' },
   // 80m^2 Group
   { id: 41, name: '41', size: '80m²' },
-  { id: 42, name: '42', size: '80m²' }
+  { id: 42, name: '42', size: '80m²' },
+  // Villa Christina
+  { id: 2, name: '2', size: '-' },
+  { id: 3, name: '3', size: '-' },
+  { id: 4, name: '4', size: '-' },
+  { id: 5, name: '5', size: '-' },
+  { id: 6, name: '6', size: '-' }
 ];
 
-function buildDefaultStays() {
-  const today = startOfDay(new Date());
-  const iso = (n) => toISO(addDays(today, n));
-  return [
-    { id: uid(), roomId: 11, type: 'stay', guestName: 'Elena Marks', phone: '555-0142', email: 'elena.m@example.com', pax: 2, checkIn: iso(-2), checkOut: iso(2), notes: 'Late checkout requested' },
-    { id: uid(), roomId: 12, type: 'stay', guestName: 'Tomas Rivera', phone: '555-0198', email: '', pax: 1, checkIn: iso(-3), checkOut: iso(0), notes: '' },
-    { id: uid(), roomId: 12, type: 'stay', guestName: 'Priya Nandan', phone: '555-0166', email: 'priya.n@example.com', pax: 2, checkIn: iso(0), checkOut: iso(4), notes: 'Arriving after 6pm' },
-    { id: uid(), roomId: 13, type: 'stay', guestName: 'Marco Bellini', phone: '555-0120', email: '', pax: 3, checkIn: iso(3), checkOut: iso(6), notes: '' },
-    { id: uid(), roomId: 14, type: 'blocked', guestName: 'Plumbing repair', phone: '', email: '', pax: 1, checkIn: iso(-1), checkOut: iso(2), notes: 'Facilities ticket #221' },
-    { id: uid(), roomId: 22, type: 'stay', guestName: 'Aiko Tanaka', phone: '555-0177', email: '', pax: 1, checkIn: iso(0), checkOut: iso(1), notes: '' },
-  ];
-}
+
 
 async function safeGet(key, shared) {
   if (!window.storage) return null;
@@ -127,17 +124,17 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
 
         {!canEditModal ? (
           <div className="px-5 py-4 space-y-3 text-sm">
-            <div><span className="text-stone-500">Room ID</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
-            <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Guest'}</span><div className="font-medium">{draft.guestName}</div></div>
-            {!isBlocked && <div><span className="text-stone-500">Πελάτες</span><div className="font-medium">{draft.pax}</div></div>}
-            <div><span className="text-stone-500">Check-in</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
-            <div><span className="text-stone-500">Check-out</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
+            <div><span className="text-stone-500">Δωμάτιο</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
+            <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Όνομα'}</span><div className="font-medium">{draft.guestName}</div></div>
+            {!isBlocked && <div><span className="text-stone-500">Άτομα</span><div className="font-medium">{draft.pax}</div></div>}
+            <div><span className="text-stone-500">Άφιξη</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
+            <div><span className="text-stone-500">Αναχώρηση</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
           </div>
         ) : (
           <div className="px-5 py-4 space-y-3">
             <div className="flex gap-2">
               <button onClick={() => field('type', 'stay')} className={`flex-1 text-sm font-medium py-2 rounded-md ${!isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Νέα Κράτηση</button>
-              <button onClick={() => field('type', 'blocked')} className={`flex-1 text-sm font-medium py-2 rounded-md ${isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Out of service</button>
+              <button onClick={() => field('type', 'blocked')} className={`flex-1 text-sm font-medium py-2 rounded-md ${isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Εκτός Λειτουργίας</button>
             </div>
 
             <div>
@@ -166,11 +163,11 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             {!isBlocked && (
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Phone</label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Τηλέφωνο</label>
                   <input type="text" value={draft.phone} onChange={(e) => field('phone', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
                 <div className="w-20">
-                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Πελάτες</label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Άτομα</label>
                   <input type="number" min="1" max="8" value={draft.pax} onChange={(e) => field('pax', Number(e.target.value))} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
               </div>
@@ -184,7 +181,7 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             )}
 
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Notes</label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Σημειώσεις</label>
               <textarea rows={2} value={draft.notes} onChange={(e) => field('notes', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
             </div>
 
@@ -553,8 +550,38 @@ export default function App() {
                 );
               }
 
+              const isKarayiannisStart = room.id === 12;
+              const isVillaChristinaStart = room.id === 2;
+
               return (
-                <div key={room.id} className="flex border-b border-stone-200" style={{ height: rowHeight }}>
+                <React.Fragment key={room.id}>
+                  {isKarayiannisStart && (
+                    <div
+                      className="flex items-center sticky z-[25] bg-stone-800 border-b border-amber-500/30"
+                      style={{ top: HEADER_HEIGHT, height: SECTION_LABEL_HEIGHT }}
+                    >
+                      <span
+                        className="sticky font-serif text-amber-300 text-xs sm:text-sm font-semibold tracking-wide uppercase"
+                        style={{ left: '50%', transform: 'translateX(-50%)' }}
+                      >
+                        Karayiannis Villas
+                      </span>
+                    </div>
+                  )}
+                  {isVillaChristinaStart && (
+                    <div
+                      className="flex items-center sticky z-[25] bg-stone-800 border-b border-amber-500/30"
+                      style={{ top: HEADER_HEIGHT, height: SECTION_LABEL_HEIGHT }}
+                    >
+                      <span
+                        className="sticky font-serif text-amber-300 text-xs sm:text-sm font-semibold tracking-wide uppercase"
+                        style={{ left: '50%', transform: 'translateX(-50%)' }}
+                      >
+                        Villa Christina
+                      </span>
+                    </div>
+                  )}
+                <div className="flex border-b border-stone-200" style={{ height: rowHeight }}>
                   <div className="sticky left-0 z-20 flex items-center justify-center bg-stone-900 border-r border-stone-700" style={{ width: roomColWidth, flexShrink: 0 }}>
                     <div className="text-center">
                       <div className="font-serif text-amber-300 text-base sm:text-lg font-bold leading-none">{room.name}</div>
@@ -630,13 +657,14 @@ export default function App() {
                             <span className="truncate">{stay.guestName}</span>
                           </div>
                           <div className="text-[10px] sm:text-[11px] opacity-80 truncate font-mono">
-                            {stay.type === 'blocked' ? 'Out of service' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
+                            {stay.type === 'blocked' ? 'Εκτός Λειτουργίας' : `${stay.pax} ${stay.pax > 1 ? 'Άτομα' : 'Άτομο'}`}
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+                </React.Fragment>
               );
             })}
           </div>

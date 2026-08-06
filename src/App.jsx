@@ -134,20 +134,6 @@ function taskBadges(tasksForCell) {
 
 const TASK_LABELS = { sheet: 'Σεντόνια', towel: 'Πετσέτες' };
 
-// lowercase + strip Greek accents (tonos) so σεντόνια / ΣΕΝΤΟΝΙΑ / Σεντόνια all match the same way
-function normalizeGreek(s) {
-  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-// returns which canonical task types the typed text refers to (can be both)
-function parseTaskInput(text) {
-  const norm = normalizeGreek(text);
-  const types = [];
-  if (norm.includes('σεντον')) types.push('sheet');
-  if (norm.includes('πετσετ')) types.push('towel');
-  return types;
-}
-
 function getStayLook(stay, todayISO) {
   if (stay.type === 'blocked') {
     return { bgClass: '', borderClass: 'border-rose-400', textClass: 'text-rose-900', hatch: true, bracketClass: 'border-rose-700' };
@@ -360,15 +346,19 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
 }
 
 function TaskModal({ room, date, tasks, canEdit, onClose }) {
-  const [text, setText] = useState('');
+  const [sheetChecked, setSheetChecked] = useState(false);
+  const [towelChecked, setTowelChecked] = useState(false);
   const [error, setError] = useState('');
   const tasksForCell = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
+  const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
+  const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
 
   async function handleAdd() {
-    if (!text.trim()) { setError('Πληκτρολογήστε "σεντόνια" ή "πετσέτες".'); return; }
-    const types = parseTaskInput(text);
+    const types = [];
+    if (sheetChecked && !hasSheet) types.push('sheet');
+    if (towelChecked && !hasTowel) types.push('towel');
     if (types.length === 0) {
-      setError('Δεν αναγνωρίστηκε — γράψτε "σεντόνια" ή "πετσέτες".');
+      setError('Επιλέξτε τουλάχιστον μία εργασία.');
       return;
     }
     setError('');
@@ -376,7 +366,8 @@ function TaskModal({ room, date, tasks, canEdit, onClose }) {
       for (const t of types) {
         await addTask(room.id, date, t);
       }
-      setText('');
+      setSheetChecked(false);
+      setTowelChecked(false);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Failed to add task.');
@@ -430,18 +421,31 @@ function TaskModal({ room, date, tasks, canEdit, onClose }) {
           {canEdit && (
             <div className="pt-2 border-t border-stone-200">
               <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Προσθήκη εργασίας</label>
-              <div className="flex gap-2 mt-1">
-                <input
-                  type="text"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="σεντόνια, πετσέτες, ή και τα δύο"
-                  className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-                <button onClick={handleAdd} className="px-3 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
-                  Add
-                </button>
+              <div className="flex flex-col gap-2 mt-2">
+                <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasSheet ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={sheetChecked}
+                    disabled={hasSheet}
+                    onChange={(e) => setSheetChecked(e.target.checked)}
+                    className="w-4 h-4 rounded border-stone-300"
+                  />
+                  <span>{'\u{1F7E5}'} Σεντόνια {hasSheet && '(ήδη προστέθηκε)'}</span>
+                </label>
+                <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasTowel ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={towelChecked}
+                    disabled={hasTowel}
+                    onChange={(e) => setTowelChecked(e.target.checked)}
+                    className="w-4 h-4 rounded border-stone-300"
+                  />
+                  <span>{'\u{1F7E6}'} Πετσέτες {hasTowel && '(ήδη προστέθηκε)'}</span>
+                </label>
               </div>
+              <button onClick={handleAdd} className="w-full mt-2 px-3 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
+                Προσθήκη
+              </button>
               {error && <p className="text-rose-600 text-xs font-medium mt-1">{error}</p>}
             </div>
           )}

@@ -190,6 +190,9 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
           const nextRoom = rooms[roomIdx + 1];
           const isGroupBoundary = nextRoom && nextRoom.size !== room.size;
           const stay = stays.find((s) => s.roomId === room.id && date >= s.checkIn && date < s.checkOut);
+          const departingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkOut === date);
+          const arrivingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkIn === date);
+          const isTurnover = !!(departingStay && arrivingStay && departingStay.id !== arrivingStay.id);
           const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
           const badges = taskBadges(cellTasks);
           const look = stay ? getStayLook(stay, date) : null;
@@ -210,7 +213,8 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
               )}
               <div
                 onClick={() => onOpenRoom(room, stay)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 active:bg-stone-50 ${isGroupBoundary ? 'border-b-2 border-stone-900' : ''}`}
+                title={isTurnover ? 'Αναχώρηση και Άφιξη — αλλαγή σεντονιών' : undefined}
+                className={`flex items-center gap-2.5 px-3 py-2.5 active:bg-stone-50 ${isGroupBoundary ? 'border-b-2 border-stone-900' : ''} ${isTurnover ? 'border-l-4 border-red-600' : ''}`}
               >
                 <div className="flex-shrink-0 w-14 h-14 rounded-lg bg-stone-900 flex flex-col items-center justify-center">
                   <span className="font-serif text-amber-300 text-base font-bold leading-none">{room.name}</span>
@@ -221,6 +225,11 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
                   className={`flex-1 min-w-0 rounded-lg border px-3 py-2 ${stay ? `${look.bgClass} ${look.borderClass} ${look.textClass}` : 'bg-white border-stone-200 text-stone-400'} ${!stay && canCreate ? 'cursor-pointer' : ''}`}
                   style={stay && stay.type === 'blocked' ? { backgroundImage: 'repeating-linear-gradient(45deg, #fecdd3, #fecdd3 4px, #fff1f2 4px, #fff1f2 8px)' } : undefined}
                 >
+                  {isTurnover && (
+                    <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-red-600 mb-0.5">
+                      <span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> Αναχώρηση &amp; Άφιξη
+                    </div>
+                  )}
                   {stay ? (
                     <>
                       <div className="flex items-center gap-1 font-semibold text-sm truncate">

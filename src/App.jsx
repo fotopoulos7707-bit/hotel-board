@@ -161,6 +161,101 @@ function getStayLook(stay, todayISO) {
   return { bgClass: 'bg-stone-200', borderClass: 'border-stone-300', textClass: 'text-stone-500', hatch: false, bracketClass: 'border-stone-500' };
 }
 
+function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canManageTasks, onOpenRoom, onOpenTask, onPrevDay, onNextDay, onToday }) {
+  const dateObj = parseISO(date);
+  const label = dateObj.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const isToday = date === todayISO;
+
+  return (
+    <div className="bg-white rounded-lg border border-stone-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-2 py-2 bg-stone-900">
+        <button onClick={onPrevDay} className="text-stone-300 hover:text-white p-2 active:bg-stone-800 rounded-md">
+          <ChevronLeft size={20} />
+        </button>
+        <div className="text-center">
+          <div className="font-serif text-white text-sm sm:text-base font-semibold capitalize">{label}</div>
+          {!isToday && (
+            <button onClick={onToday} className="text-[10px] text-amber-300 uppercase tracking-wide font-mono">
+              Πήγαινε στο Σήμερα
+            </button>
+          )}
+        </div>
+        <button onClick={onNextDay} className="text-stone-300 hover:text-white p-2 active:bg-stone-800 rounded-md">
+          <ChevronRight size={20} />
+        </button>
+      </div>
+
+      <div className="divide-y divide-stone-200">
+        {rooms.map((room, roomIdx) => {
+          const nextRoom = rooms[roomIdx + 1];
+          const isGroupBoundary = nextRoom && nextRoom.size !== room.size;
+          const stay = stays.find((s) => s.roomId === room.id && date >= s.checkIn && date < s.checkOut);
+          const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
+          const badges = taskBadges(cellTasks);
+          const look = stay ? getStayLook(stay, date) : null;
+          const isKarayiannisStart = room.id === 12;
+          const isVillaChristinaStart = room.id === 2;
+
+          return (
+            <React.Fragment key={room.id}>
+              {isKarayiannisStart && (
+                <div className="bg-stone-800 px-3 py-1.5">
+                  <span className="font-serif text-amber-300 text-xs font-semibold tracking-wide uppercase">Karayiannis Villas</span>
+                </div>
+              )}
+              {isVillaChristinaStart && (
+                <div className="bg-stone-800 px-3 py-1.5">
+                  <span className="font-serif text-amber-300 text-xs font-semibold tracking-wide uppercase">Villa Christina</span>
+                </div>
+              )}
+              <div
+                onClick={() => onOpenRoom(room, stay)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 active:bg-stone-50 ${isGroupBoundary ? 'border-b-2 border-stone-900' : ''}`}
+              >
+                <div className="flex-shrink-0 w-14 h-14 rounded-lg bg-stone-900 flex flex-col items-center justify-center">
+                  <span className="font-serif text-amber-300 text-base font-bold leading-none">{room.name}</span>
+                  <span className="font-mono text-[7px] text-stone-400 uppercase tracking-widest mt-0.5 truncate max-w-[52px]">{room.size}</span>
+                </div>
+
+                <div
+                  className={`flex-1 min-w-0 rounded-lg border px-3 py-2 ${stay ? `${look.bgClass} ${look.borderClass} ${look.textClass}` : 'bg-white border-stone-200 text-stone-400'} ${!stay && canCreate ? 'cursor-pointer' : ''}`}
+                  style={stay && stay.type === 'blocked' ? { backgroundImage: 'repeating-linear-gradient(45deg, #fecdd3, #fecdd3 4px, #fff1f2 4px, #fff1f2 8px)' } : undefined}
+                >
+                  {stay ? (
+                    <>
+                      <div className="flex items-center gap-1 font-semibold text-sm truncate">
+                        {stay.type === 'blocked' ? <Wrench size={13} /> : <User size={13} />}
+                        <span className="truncate">{stay.guestName}</span>
+                      </div>
+                      <div className="text-xs opacity-80 font-mono">
+                        {stay.type === 'blocked' ? 'Εκτός λειτουργίας' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm">{canCreate ? 'Ελεύθερο — πατήστε για προσθήκη' : 'Ελεύθερο'}</div>
+                  )}
+                </div>
+
+                <div className="flex-shrink-0 flex flex-col items-center gap-1.5">
+                  {badges && <span className="text-lg leading-none">{badges}</span>}
+                  {canManageTasks && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onOpenTask(room, date); }}
+                      className="w-7 h-7 flex items-center justify-center rounded-full bg-stone-900/80 text-white text-sm active:bg-stone-900"
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete, onClose }) {
   const canEditModal = role === 'admin';
   const isBlocked = draft.type === 'blocked';
@@ -372,6 +467,8 @@ export default function App() {
   
 
   const [viewStart, setViewStart] = useState(startOfDay(new Date()));
+  const [mobileDate, setMobileDate] = useState(() => toISO(new Date()));
+  const [mobileViewMode, setMobileViewMode] = useState('list');
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1400);
   const [modal, setModal] = useState(null);
   const [modalError, setModalError] = useState('');
@@ -554,6 +651,11 @@ export default function App() {
 
   function closeTaskModal() { setTaskModal(null); }
 
+  function handleMobileRoomOpen(room, stay) {
+    if (stay) openEditModal(stay);
+    else openAddModal(room.id, mobileDate);
+  }
+
   async function handleSave() {
     const d = modal.draft;
     if (d.id ? !canEdit : !canCreate) {
@@ -674,12 +776,35 @@ export default function App() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-white border border-stone-300 inline-block" /> Ελεύθερο {role === 'admin' && '(πατήστε για προσθήκη)'}</span>
         </div>
 
+        {isMobile && (
+          <div className="flex rounded-md overflow-hidden border border-stone-300 mb-3 w-fit">
+            <button onClick={() => setMobileViewMode('list')} className={`px-3 py-1.5 text-xs font-semibold ${mobileViewMode === 'list' ? 'bg-stone-900 text-white' : 'bg-white text-stone-600'}`}>Ημέρα</button>
+            <button onClick={() => setMobileViewMode('grid')} className={`px-3 py-1.5 text-xs font-semibold ${mobileViewMode === 'grid' ? 'bg-stone-900 text-white' : 'bg-white text-stone-600'}`}>Πλέγμα</button>
+          </div>
+        )}
+
         {!storageOK && (
           <div className="mb-3 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
             Work in progress - Not final version
           </div>
         )}
 
+        {isMobile && mobileViewMode === 'list' ? (
+          <MobileDayList
+            rooms={rooms}
+            stays={stays}
+            tasks={tasks}
+            date={mobileDate}
+            todayISO={todayISO}
+            canCreate={canCreate}
+            canManageTasks={canManageTasks}
+            onOpenRoom={handleMobileRoomOpen}
+            onOpenTask={openTaskModal}
+            onPrevDay={() => setMobileDate(toISO(addDays(parseISO(mobileDate), -1)))}
+            onNextDay={() => setMobileDate(toISO(addDays(parseISO(mobileDate), 1)))}
+            onToday={() => setMobileDate(toISO(new Date()))}
+          />
+        ) : (
         <div className="overflow-auto rounded-lg border border-stone-200 bg-white shadow-sm" style={{ maxHeight: '75vh' }}>
           <div style={{ minWidth: roomColWidth + numDays * colWidth }}>
 
@@ -878,6 +1003,7 @@ export default function App() {
             })}
           </div>
         </div>
+        )}
 
         <p className="text-[11px] text-stone-400 mt-3">
           Admin and staff views share the same board and stay data &mdash; changes made as Admin appear on Staff devices within a few seconds. The Admin/Staff toggle itself is remembered per device only.

@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 import Auth from "./Auth";
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, ChevronLeft, ChevronRight, User, Phone, Mail, Users, Wrench, RefreshCw } from 'lucide-react';
+import { X, Plus, Trash2, ChevronLeft, ChevronRight, User, Users, Wrench, RefreshCw } from 'lucide-react';
 
 function dbToStay(row) {
   return {
@@ -9,8 +9,6 @@ function dbToStay(row) {
     roomId: row.room_id,
     type: row.type,
     guestName: row.guest_name,
-    phone: row.phone,
-    email: row.email,
     pax: row.pax,
     checkIn: row.check_in,
     checkOut: row.check_out,
@@ -23,13 +21,27 @@ function stayToDb(stay) {
     room_id: stay.roomId,
     type: stay.type,
     guest_name: stay.guestName,
-    phone: stay.phone,
-    email: stay.email,
     pax: stay.pax,
     check_in: stay.checkIn,
     check_out: stay.checkOut,
     notes: stay.notes,
   };
+}
+
+async function saveStay(stay) {
+  const row = stayToDb(stay);
+  if (stay.id) {
+    const { error } = await supabase.from('stays').update(row).eq('id', stay.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('stays').insert(row);
+    if (error) throw error;
+  }
+}
+
+async function deleteStay(id) {
+  const { error } = await supabase.from('stays').delete().eq('id', id);
+  if (error) throw error;
 }
 
 
@@ -54,7 +66,6 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 
 // Custom rooms grouped by square meters: 40m^2, 60m^2, then 80m^2
 const defaultRooms = [
-  // Karayiannis Villas
   // 40m^2 Group
   { id: 12, name: '12', size: '40m²' },
   { id: 14, name: '14', size: '40m²' },
@@ -91,6 +102,52 @@ async function safeSet(key, value, shared) {
   catch (e) { return false; }
 }
 
+async function addTask(roomId, date, taskType) {
+  if (!date || !roomId || !taskType || !taskType.trim()) return;
+
+  const { error } = await supabase
+    .from("housekeeping_tasks")
+    .insert({
+      room_id: roomId,
+      task_type: taskType.trim().toLowerCase(),
+      task_date: date,
+    });
+
+  if (error) throw error;
+}
+
+async function deleteTask(taskId) {
+  const { error } = await supabase
+    .from("housekeeping_tasks")
+    .delete()
+    .eq("id", taskId);
+
+  if (error) throw error;
+}
+
+// task_type is always stored as the canonical 'sheet' / 'towel' (required by the DB check constraint).
+function taskBadges(tasksForCell) {
+  const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
+  const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
+  return `${hasSheet ? '\u{1F7E5}' : ''}${hasTowel ? '\u{1F7E6}' : ''}`;
+}
+
+const TASK_LABELS = { sheet: 'Σεντόνια', towel: 'Πετσέτες' };
+
+// lowercase + strip Greek accents (tonos) so σεντόνια / ΣΕΝΤΟΝΙΑ / Σεντόνια all match the same way
+function normalizeGreek(s) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// returns which canonical task types the typed text refers to (can be both)
+function parseTaskInput(text) {
+  const norm = normalizeGreek(text);
+  const types = [];
+  if (norm.includes('σεντον')) types.push('sheet');
+  if (norm.includes('πετσετ')) types.push('towel');
+  return types;
+}
+
 function getStayLook(stay, todayISO) {
   if (stay.type === 'blocked') {
     return { bgClass: '', borderClass: 'border-rose-400', textClass: 'text-rose-900', hatch: true, bracketClass: 'border-rose-700' };
@@ -124,17 +181,17 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
 
         {!canEditModal ? (
           <div className="px-5 py-4 space-y-3 text-sm">
-            <div><span className="text-stone-500">Δωμάτιο</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
-            <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Όνομα'}</span><div className="font-medium">{draft.guestName}</div></div>
-            {!isBlocked && <div><span className="text-stone-500">Άτομα</span><div className="font-medium">{draft.pax}</div></div>}
-            <div><span className="text-stone-500">Άφιξη</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
-            <div><span className="text-stone-500">Αναχώρηση</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
+            <div><span className="text-stone-500">Room ID</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
+            <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Guest'}</span><div className="font-medium">{draft.guestName}</div></div>
+            {!isBlocked && <div><span className="text-stone-500">Πελάτες</span><div className="font-medium">{draft.pax}</div></div>}
+            <div><span className="text-stone-500">Check-in</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
+            <div><span className="text-stone-500">Check-out</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
           </div>
         ) : (
           <div className="px-5 py-4 space-y-3">
             <div className="flex gap-2">
               <button onClick={() => field('type', 'stay')} className={`flex-1 text-sm font-medium py-2 rounded-md ${!isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Νέα Κράτηση</button>
-              <button onClick={() => field('type', 'blocked')} className={`flex-1 text-sm font-medium py-2 rounded-md ${isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Εκτός Λειτουργίας</button>
+              <button onClick={() => field('type', 'blocked')} className={`flex-1 text-sm font-medium py-2 rounded-md ${isBlocked ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-600'}`}>Out of service</button>
             </div>
 
             <div>
@@ -161,27 +218,14 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             </div>
 
             {!isBlocked && (
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Τηλέφωνο</label>
-                  <input type="text" value={draft.phone} onChange={(e) => field('phone', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                </div>
-                <div className="w-20">
-                  <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Άτομα</label>
-                  <input type="number" min="1" max="8" value={draft.pax} onChange={(e) => field('pax', Number(e.target.value))} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                </div>
-              </div>
-            )}
-
-            {!isBlocked && (
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Email</label>
-                <input type="text" value={draft.email} onChange={(e) => field('email', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              <div className="w-24">
+                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Πελάτες</label>
+                <input type="number" min="1" max="8" value={draft.pax} onChange={(e) => field('pax', Number(e.target.value))} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
               </div>
             )}
 
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Σημειώσεις</label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Notes</label>
               <textarea rows={2} value={draft.notes} onChange={(e) => field('notes', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
             </div>
 
@@ -211,6 +255,98 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
   );
 }
 
+function TaskModal({ room, date, tasks, canEdit, onClose }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState('');
+  const tasksForCell = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
+
+  async function handleAdd() {
+    if (!text.trim()) { setError('Πληκτρολογήστε "σεντόνια" ή "πετσέτες".'); return; }
+    const types = parseTaskInput(text);
+    if (types.length === 0) {
+      setError('Δεν αναγνωρίστηκε — γράψτε "σεντόνια" ή "πετσέτες".');
+      return;
+    }
+    setError('');
+    try {
+      for (const t of types) {
+        await addTask(room.id, date, t);
+      }
+      setText('');
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to add task.');
+    }
+  }
+
+  async function handleDelete(id) {
+    setError('');
+    try {
+      await deleteTask(id);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to delete task.');
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
+          <div>
+            <h2 className="font-serif text-lg font-semibold text-stone-900">Housekeeping</h2>
+            <p className="text-xs text-stone-500 font-mono mt-0.5">{room.name} &middot; {date}</p>
+          </div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          {tasksForCell.length === 0 ? (
+            <p className="text-stone-400 text-xs">Δεν έχουν καταχωρηθεί εργασίες για αυτή τη μέρα.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {tasksForCell.map((t) => (
+                <li key={t.id} className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-md px-2.5 py-1.5">
+                  <span className="text-sm">
+                    <span className="mr-1.5">{taskBadges([t])}</span>
+                    <span className="text-stone-700">{TASK_LABELS[t.task_type] ?? t.task_type}</span>
+                  </span>
+                  {canEdit && (
+                    <button onClick={() => handleDelete(t.id)} className="text-rose-500 hover:text-rose-700">
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {canEdit && (
+            <div className="pt-2 border-t border-stone-200">
+              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Προσθήκη εργασίας</label>
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="text"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="σεντόνια, πετσέτες, ή και τα δύο"
+                  className="flex-1 border border-stone-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button onClick={handleAdd} className="px-3 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
+                  Add
+                </button>
+              </div>
+              {error && <p className="text-rose-600 text-xs font-medium mt-1">{error}</p>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   
 
@@ -220,6 +356,9 @@ export default function App() {
   
   const [rooms, setRooms] = useState(defaultRooms);
   const [stays, setStays] = useState([]);
+
+  const [tasks, setTasks] = useState([]);
+
   const role = profile?.role ?? "";
 
   const isAdmin = role === "admin";
@@ -229,12 +368,14 @@ export default function App() {
   const canCreate = isAdmin;
   const canEdit = isAdmin;
   const canDelete = isAdmin;
+  const canManageTasks = isAdmin;
   
 
   const [viewStart, setViewStart] = useState(startOfDay(new Date()));
-  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 700 : false);
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1400);
   const [modal, setModal] = useState(null);
   const [modalError, setModalError] = useState('');
+  const [taskModal, setTaskModal] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
   const [storageOK, setStorageOK] = useState(true);
@@ -242,7 +383,7 @@ export default function App() {
   
 
   useEffect(() => {
-    function onResize() { setIsMobile(window.innerWidth < 700); }
+    function onResize() { setWindowWidth(window.innerWidth); }
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -262,7 +403,6 @@ export default function App() {
     const staysRaw = data.map(dbToStay);
 
     let r = roomsRaw ? JSON.parse(roomsRaw) : null;
-    let s = staysRaw;
     let ok = true;
 
     if (!r || !r[0]?.size) {
@@ -270,21 +410,51 @@ export default function App() {
       ok = await safeSet(ROOMS_KEY, JSON.stringify(r), true);
     }
 
-    if (!s) s = [];
-
     setRooms(r);
-    setStays(s);
+    setStays(staysRaw);
     setStorageOK(ok !== false);
     setLastSynced(new Date());
-
   } catch (err) {
-    console.error(err);
+    console.error('Failed to load stays:', err);
+    setStorageOK(false);
+  }
+
+  try {
+    const { data: taskData, error: taskError } = await supabase
+      .from("housekeeping_tasks")
+      .select("*");
+
+    if (taskError) throw taskError;
+    setTasks(taskData ?? []);
+  } catch (err) {
+    console.error('Failed to load housekeeping tasks:', err);
+    // don't touch stays/rooms state — a broken tasks table shouldn't hide stays
   } finally {
     setSyncing(false);
     setLoading(false);
   }
 
 }, []);
+
+  useEffect(() => {
+
+    const channel = supabase
+        .channel("housekeeping")
+        .on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "housekeeping_tasks",
+            },
+            loadData
+        )
+        .subscribe();
+
+    return () => supabase.removeChannel(channel);
+
+}, [loadData]);
+
 
   useEffect(() => {
   const channel = supabase
@@ -308,13 +478,22 @@ export default function App() {
 }, [loadData]);
 
   useEffect(() => {
-    loadData();
-    
-    // const iv = setInterval(loadData, 5000);
-    function onVis() { if (document.visibilityState === 'visible') loadData(); }
-    document.addEventListener('visibilitychange', onVis);
-    return () => {  document.removeEventListener('visibilitychange', onVis); };
-  }, [loadData]);
+  if (!user) return;
+
+  loadData();
+
+  function onVis() {
+    if (document.visibilityState === "visible") {
+      loadData();
+    }
+  }
+
+  document.addEventListener("visibilitychange", onVis);
+
+  return () => {
+    document.removeEventListener("visibilitychange", onVis);
+  };
+}, [user, loadData]);
 
   // clearInterval(iv);
   useEffect(() => {
@@ -353,35 +532,11 @@ export default function App() {
   }, [user]);
 
 
-  async function persistStays(next) {
-  setStays(next);
-
-  try {
-    const { error: deleteError } = await supabase
-      .from("stays")
-      .delete()
-      .neq("id", 0);
-
-    if (deleteError) throw deleteError;
-
-    const rows = next.map(stayToDb);
-
-    const { error: insertError } = await supabase
-      .from("stays")
-      .insert(rows);
-
-    if (insertError) throw insertError;
-
-  } catch (err) {
-    console.error(err);
-  }
-}
-
   function openAddModal(roomId, dateISO) {
     if (!canCreate) return;
     setModal({
       mode: 'add',
-      draft: { id: null, roomId, type: 'stay', guestName: '', phone: '', email: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
+      draft: { id: null, roomId, type: 'stay', guestName: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
     });
     setModalError('');
   }
@@ -395,7 +550,11 @@ export default function App() {
 
   function setDraft(draft) { setModal({ ...modal, draft }); }
 
-  function handleSave() {
+  function openTaskModal(room, dateISO) { setTaskModal({ room, date: dateISO }); }
+
+  function closeTaskModal() { setTaskModal(null); }
+
+  async function handleSave() {
     const d = modal.draft;
     if (d.id ? !canEdit : !canCreate) {
       setModalError('You do not have permission to make this change.');
@@ -414,23 +573,35 @@ export default function App() {
       setModalError('Ταυτίζεται με άλλη διανυκτέρευση στο ίδιο δωμάτιο.');
       return;
     }
-    let next;
-    if (d.id) next = stays.map(s => (s.id === d.id ? { ...d } : s));
-    else next = [...stays, { ...d, id: uid() }];
-    persistStays(next);
-    closeModal();
+    try {
+      await saveStay(d);
+      closeModal(); // realtime subscription refreshes `stays` for everyone
+    } catch (err) {
+      console.error(err);
+      setModalError(err.message || 'Failed to save.');
+    }
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!canDelete) return;
     if (!modal.draft.id) return;
-    persistStays(stays.filter(s => s.id !== modal.draft.id));
-    closeModal();
+    try {
+      await deleteStay(modal.draft.id);
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      setModalError(err.message || 'Failed to delete.');
+    }
   }
 
+  const isMobile = windowWidth < 700;
   const numDays = isMobile ? 7 : 14;
-  const colWidth = isMobile ? 66 : 104;
-  const roomColWidth = isMobile ? 76 : 132;
+  // p-3/sm:p-6 outer padding (12px or 24px per side) + 1px border per side
+  const containerPadding = (isMobile ? 12 : 24) * 2 + 2;
+  const availableWidth = Math.max(280, windowWidth - containerPadding);
+  const MIN_COL_WIDTH = isMobile ? 34 : 60;
+  const roomColWidth = Math.max(56, Math.round(availableWidth * (isMobile ? 0.16 : 0.12)));
+  const colWidth = Math.max(MIN_COL_WIDTH, Math.floor((availableWidth - roomColWidth) / numDays));
   const rowHeight = isMobile ? 58 : 68;
 
   const today = startOfDay(new Date());
@@ -498,6 +669,8 @@ export default function App() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" /> Κλεισμένο</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-rose-400 inline-block" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fecdd3, #fecdd3 3px, #fff1f2 3px, #fff1f2 6px)' }} /> Εκτός Λειτουργίας</span>
           <span className="flex items-center gap-1.5"><span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> Αναχώρηση και Άφιξη</span>
+          <span className="flex items-center gap-1.5">{'\u{1F7E6}'} Πετσέτες</span>
+          <span className="flex items-center gap-1.5">{'\u{1F7E5}'} Σεντόνια</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-white border border-stone-300 inline-block" /> Ελεύθερο {role === 'admin' && '(πατήστε για προσθήκη)'}</span>
         </div>
 
@@ -657,8 +830,44 @@ export default function App() {
                             <span className="truncate">{stay.guestName}</span>
                           </div>
                           <div className="text-[10px] sm:text-[11px] opacity-80 truncate font-mono">
-                            {stay.type === 'blocked' ? 'Εκτός Λειτουργίας' : `${stay.pax} ${stay.pax > 1 ? 'Άτομα' : 'Άτομο'}`}
+                            {stay.type === 'blocked' ? 'Out of service' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
                           </div>
+                        </div>
+                      );
+                    })}
+
+                    {viewDays.map((d) => {
+                      const iso = toISO(d);
+                      const idx = dayIndexBetween(viewStart, d);
+                      const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === iso);
+                      const badges = taskBadges(cellTasks);
+                      if (!badges && !canManageTasks) return null;
+                      return (
+                        <div
+                          key={`task-${iso}`}
+                          className="absolute z-10 flex items-end justify-between px-0.5 pb-0.5"
+                          style={{ left: idx * colWidth, width: colWidth, top: 0, height: rowHeight, pointerEvents: 'none' }}
+                        >
+                          {badges ? (
+                            <span
+                              className="text-[11px] leading-none cursor-pointer"
+                              style={{ pointerEvents: 'auto' }}
+                              title={cellTasks.map((t) => TASK_LABELS[t.task_type] ?? t.task_type).join(', ')}
+                              onClick={() => openTaskModal(room, iso)}
+                            >
+                              {badges}
+                            </span>
+                          ) : <span />}
+                          {canManageTasks && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openTaskModal(room, iso); }}
+                              title="Add housekeeping task"
+                              className="w-3.5 h-3.5 flex items-center justify-center rounded-full bg-stone-900/70 text-white text-[9px] leading-none hover:bg-stone-900"
+                              style={{ pointerEvents: 'auto' }}
+                            >
+                              +
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -686,6 +895,16 @@ export default function App() {
           onSave={handleSave}
           onDelete={handleDelete}
           onClose={closeModal}
+        />
+      )}
+
+      {taskModal && (
+        <TaskModal
+          room={taskModal.room}
+          date={taskModal.date}
+          tasks={tasks}
+          canEdit={canManageTasks}
+          onClose={closeTaskModal}
         />
       )}
     </div>

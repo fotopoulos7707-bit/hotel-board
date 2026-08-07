@@ -957,7 +957,6 @@ export default function App() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" /> Κλεισμένο</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-rose-400 inline-block" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fecdd3, #fecdd3 3px, #fff1f2 3px, #fff1f2 6px)' }} /> Εκτός Λειτουργίας</span>
           <span className="flex items-center gap-1.5"><span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> Αναχώρηση και Άφιξη</span>
-          <span className="flex items-center gap-1.5"><span className="w-1.5 h-3 inline-block rounded-sm bg-amber-500" /> Άφιξη</span>
           <span className="flex items-center gap-1.5">{'\u{1F7E6}'} Πετσέτες</span>
           <span className="flex items-center gap-1.5">{'\u{1F7E5}'} Σεντόνια</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-white border border-stone-300 inline-block" /> Ελεύθερο {role === 'admin' && '(πατήστε για προσθήκη)'}</span>

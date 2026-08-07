@@ -204,7 +204,13 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
           const stay = stays.find((s) => s.roomId === room.id && date >= s.checkIn && date < s.checkOut);
           const departingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkOut === date);
           const arrivingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkIn === date);
+          
+          // Check if today is the last night (i.e. checkOut is tomorrow)
+          const tomorrowISO = toISO(addDays(parseISO(date), 1));
+          const isLastNight = stay && stay.type === 'stay' && stay.checkOut === tomorrowISO;
+
           const isTurnover = !!(departingStay && arrivingStay && departingStay.id !== arrivingStay.id);
+          const isArrival = !!arrivingStay && !isTurnover;
           const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
           const badges = taskBadges(cellTasks);
           const look = stay ? getStayLook(stay, todayISO) : null;
@@ -225,8 +231,8 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
               )}
               <div
                 onClick={() => onOpenRoom(room, stay)}
-                title={isTurnover ? 'Αναχώρηση και Άφιξη — αλλαγή σεντονιών' : undefined}
-                className={`flex items-center gap-2.5 px-3 py-2.5 active:bg-stone-50 ${isGroupBoundary ? 'border-b-2 border-stone-900' : ''} ${isTurnover ? 'border-l-4 border-red-600' : ''}`}
+                title={isTurnover ? 'Αναχώρηση και Άφιξη — αλλαγή σεντονιών' : isArrival ? 'Άφιξη' : isLastNight ? 'Αναχώρηση αύριο' : undefined}
+                className={`flex items-center gap-2.5 px-3 py-2.5 active:bg-stone-50 ${isGroupBoundary ? 'border-b-2 border-stone-900' : ''} ${isTurnover ? 'border-l-4 border-red-600' : isArrival ? 'border-l-4 border-amber-500' : isLastNight ? 'border-l-4 border-blue-500' : ''}`}
               >
                 <div className="flex-shrink-0 w-14 h-14 rounded-lg bg-stone-900 flex flex-col items-center justify-center">
                   <span className="font-serif text-amber-300 text-base font-bold leading-none">{room.name}</span>
@@ -240,6 +246,16 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
                   {isTurnover && (
                     <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-red-600 mb-0.5">
                       <span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> <span style={TEXT_OUTLINE_STYLE}>Αναχώρηση &amp; Άφιξη</span>
+                    </div>
+                  )}
+                  {isArrival && (
+                    <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600 mb-0.5">
+                      <span className="w-1.5 h-3 inline-block rounded-sm bg-amber-500" /> <span style={TEXT_OUTLINE_STYLE}>Άφιξη</span>
+                    </div>
+                  )}
+                  {isLastNight && !isTurnover && (
+                    <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-blue-600 mb-0.5">
+                      <span className="w-1.5 h-3 inline-block rounded-sm bg-blue-500" /> <span style={TEXT_OUTLINE_STYLE}>Αναχώρηση αύριο</span>
                     </div>
                   )}
                   {stay ? (
@@ -941,6 +957,7 @@ export default function App() {
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" /> Κλεισμένο</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm border border-rose-400 inline-block" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fecdd3, #fecdd3 3px, #fff1f2 3px, #fff1f2 6px)' }} /> Εκτός Λειτουργίας</span>
           <span className="flex items-center gap-1.5"><span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> Αναχώρηση και Άφιξη</span>
+          <span className="flex items-center gap-1.5"><span className="w-1.5 h-3 inline-block rounded-sm bg-amber-500" /> Άφιξη</span>
           <span className="flex items-center gap-1.5">{'\u{1F7E6}'} Πετσέτες</span>
           <span className="flex items-center gap-1.5">{'\u{1F7E5}'} Σεντόνια</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-white border border-stone-300 inline-block" /> Ελεύθερο {role === 'admin' && '(πατήστε για προσθήκη)'}</span>
@@ -953,11 +970,7 @@ export default function App() {
           </div>
         )}
 
-        {!storageOK && (
-          <div className="mb-3 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
-            Work in progress - Not final version
-          </div>
-        )}
+        
 
         {isMobile && mobileViewMode === 'list' ? (
           <MobileDayList

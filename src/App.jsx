@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 import Auth from "./Auth";
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, ChevronLeft, ChevronRight, User, Users, Wrench, RefreshCw } from 'lucide-react';
+import { X, Plus, Trash2, ChevronLeft, ChevronRight, User, Users, Wrench, RefreshCw, StickyNote } from 'lucide-react';
 
 function dbToStay(row) {
   return {
@@ -9,6 +9,7 @@ function dbToStay(row) {
     roomId: row.room_id,
     type: row.type,
     guestName: row.guest_name,
+    extraSpaces: row.extra_spaces,
     pax: row.pax,
     checkIn: row.check_in,
     checkOut: row.check_out,
@@ -21,6 +22,7 @@ function stayToDb(stay) {
     room_id: stay.roomId,
     type: stay.type,
     guest_name: stay.guestName,
+    extra_spaces: stay.extraSpaces,
     pax: stay.pax,
     check_in: stay.checkIn,
     check_out: stay.checkOut,
@@ -125,6 +127,22 @@ async function deleteTask(taskId) {
   if (error) throw error;
 }
 
+// upserts the note for a given date; clearing it to empty deletes the row instead of storing blank text
+const VILLAS = { karayiannis: 'Karayiannis Villas', christina: 'Villa Christina' };
+
+async function saveDayNote(dateISO, villa, text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    const { error } = await supabase.from("day_notes").delete().eq("note_date", dateISO).eq("villa", villa);
+    if (error) throw error;
+    return;
+  }
+  const { error } = await supabase
+    .from("day_notes")
+    .upsert({ note_date: dateISO, villa, note: trimmed }, { onConflict: 'note_date,villa' });
+  if (error) throw error;
+}
+
 // task_type is always stored as the canonical 'sheet' / 'towel' (required by the DB check constraint).
 function taskBadges(tasksForCell) {
   const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
@@ -133,6 +151,11 @@ function taskBadges(tasksForCell) {
 }
 
 const TASK_LABELS = { sheet: 'Σεντόνια', towel: 'Πετσέτες' };
+
+// white halo around the text so red-on-any-background stays readable
+const TEXT_OUTLINE_STYLE = {
+  textShadow: '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px rgba(255,255,255,0.9)',
+};
 
 function getStayLook(stay, todayISO) {
   if (stay.type === 'blocked') {
@@ -147,7 +170,7 @@ function getStayLook(stay, todayISO) {
   return { bgClass: 'bg-stone-200', borderClass: 'border-stone-300', textClass: 'text-stone-500', hatch: false, bracketClass: 'border-stone-500' };
 }
 
-function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canManageTasks, onOpenRoom, onOpenTask, onPrevDay, onNextDay, onToday }) {
+function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canManageTasks, isAdmin, hasNote, onOpenRoom, onOpenTask, onOpenNote, onPrevDay, onNextDay, onToday }) {
   const dateObj = parseISO(date);
   const label = dateObj.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
   const isToday = date === todayISO;
@@ -158,11 +181,23 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
         <button onClick={onPrevDay} className="text-stone-300 hover:text-white p-2 active:bg-stone-800 rounded-md">
           <ChevronLeft size={20} />
         </button>
-        <div className="text-center">
-          <div className="font-serif text-white text-sm sm:text-base font-semibold capitalize">{label}</div>
-          {!isToday && (
-            <button onClick={onToday} className="text-[10px] text-amber-300 uppercase tracking-wide font-mono">
-              Πήγαινε στο Σήμερα
+        <div className="text-center flex items-center gap-1.5">
+          <div>
+            <div className="font-serif text-white text-sm sm:text-base font-semibold capitalize">{label}</div>
+            {!isToday && (
+              <button onClick={onToday} className="text-[10px] text-amber-300 uppercase tracking-wide font-mono">
+                Πήγαινε στο Σήμερα
+              </button>
+            )}
+          </div>
+          {isAdmin && (
+            <button onClick={onOpenNote} title="Σημειώσεις της ημέρας" className="w-6 h-6 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white">
+              <Plus size={13} />
+            </button>
+          )}
+          {!isAdmin && hasNote && (
+            <button onClick={onOpenNote} title="Σημειώσεις της ημέρας" className="w-6 h-6 flex items-center justify-center rounded-full text-amber-300">
+              <StickyNote size={14} />
             </button>
           )}
         </div>
@@ -181,7 +216,7 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
           const isTurnover = !!(departingStay && arrivingStay && departingStay.id !== arrivingStay.id);
           const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
           const badges = taskBadges(cellTasks);
-          const look = stay ? getStayLook(stay, date) : null;
+          const look = stay ? getStayLook(stay, todayISO) : null;
           const isKarayiannisStart = room.id === 12;
           const isVillaChristinaStart = room.id === 2;
 
@@ -213,14 +248,15 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
                 >
                   {isTurnover && (
                     <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-red-600 mb-0.5">
-                      <span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> Αναχώρηση &amp; Άφιξη
+                      <span className="w-1.5 h-3 inline-block rounded-sm bg-red-600" /> <span style={TEXT_OUTLINE_STYLE}>Αναχώρηση &amp; Άφιξη</span>
                     </div>
                   )}
                   {stay ? (
                     <>
                       <div className="flex items-center gap-1 font-semibold text-sm truncate">
                         {stay.type === 'blocked' ? <Wrench size={13} /> : <User size={13} />}
-                        <span className="truncate">{stay.guestName}</span>
+                        <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '—')}</span>
+                        {stay.notes && stay.notes.trim() && <StickyNote size={12} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                       </div>
                       <div className="text-xs opacity-80 font-mono">
                         {stay.type === 'blocked' ? 'Εκτός λειτουργίας' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
@@ -233,7 +269,7 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
 
                 <div className="flex-shrink-0 flex flex-col items-center gap-1.5">
                   {badges && <span className="text-lg leading-none">{badges}</span>}
-                  {canManageTasks && (
+                  {canManageTasks && stay && stay.type === 'stay' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onOpenTask(room, date); }}
                       className="w-7 h-7 flex items-center justify-center rounded-full bg-stone-900/80 text-white text-sm active:bg-stone-900"
@@ -272,10 +308,16 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
         {!canEditModal ? (
           <div className="px-5 py-4 space-y-3 text-sm">
             <div><span className="text-stone-500">Room ID</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
-            <div><span className="text-stone-500">{isBlocked ? 'Reason' : 'Guest'}</span><div className="font-medium">{draft.guestName}</div></div>
+            {isBlocked && <div><span className="text-stone-500">Reason</span><div className="font-medium">{draft.guestName}</div></div>}
+            {!isBlocked && (
+              <div><span className="text-stone-500">Εξτρα Χώροι</span><div className="font-medium">{draft.extraSpaces && draft.extraSpaces.trim() ? draft.extraSpaces : '—'}</div></div>
+            )}
             {!isBlocked && <div><span className="text-stone-500">Πελάτες</span><div className="font-medium">{draft.pax}</div></div>}
             <div><span className="text-stone-500">Check-in</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
             <div><span className="text-stone-500">Check-out</span><div className="font-medium font-mono">{draft.checkOut}</div></div>
+            {draft.notes && draft.notes.trim() && (
+              <div><span className="text-stone-500">Σημειώσεις</span><div className="font-medium whitespace-pre-wrap">{draft.notes}</div></div>
+            )}
           </div>
         ) : (
           <div className="px-5 py-4 space-y-3">
@@ -306,6 +348,13 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
               <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">{isBlocked ? 'Reason' : 'Όνομα Πελάτη'}</label>
               <input type="text" value={draft.guestName} onChange={(e) => field('guestName', e.target.value)} placeholder={isBlocked ? 'Maintenance, deep clean...' : 'Full name'} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
             </div>
+
+            {!isBlocked && (
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Εξτρα Χώροι</label>
+                <input type="text" value={draft.extraSpaces || ''} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              </div>
+            )}
 
             {!isBlocked && (
               <div className="w-24">
@@ -455,6 +504,97 @@ function TaskModal({ room, date, tasks, canEdit, onClose }) {
   );
 }
 
+function DayNoteModal({ date, karayiannisNote, christinaNote, canEdit, onSave, onClose }) {
+  const [karayiannisText, setKarayiannisText] = useState(karayiannisNote || '');
+  const [christinaText, setChristinaText] = useState(christinaNote || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const dateObj = parseISO(date);
+  const label = dateObj.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  async function handleSave() {
+    setError('');
+    setSaving(true);
+    try {
+      await onSave('karayiannis', karayiannisText);
+      await onSave('christina', christinaText);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to save note.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
+          <div>
+            <h2 className="font-serif text-lg font-semibold text-stone-900">Σημειώσεις της ημέρας</h2>
+            <p className="text-xs text-stone-500 font-mono mt-0.5 capitalize">{label}</p>
+          </div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {canEdit ? (
+            <>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</label>
+                <textarea
+                  rows={4}
+                  value={karayiannisText}
+                  onChange={(e) => setKarayiannisText(e.target.value)}
+                  placeholder="Σημειώσεις για τα Karayiannis Villas..."
+                  className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</label>
+                <textarea
+                  rows={4}
+                  value={christinaText}
+                  onChange={(e) => setChristinaText(e.target.value)}
+                  placeholder="Σημειώσεις για τη Villa Christina..."
+                  className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
+              <div className="flex justify-end gap-2">
+                <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+                  Ακύρωση
+                </button>
+                <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800 disabled:opacity-50">
+                  Αποθήκευση
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</span>
+                <p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">
+                  {karayiannisNote && karayiannisNote.trim() ? karayiannisNote : 'Δεν υπάρχουν σημειώσεις.'}
+                </p>
+              </div>
+              <div className="pt-3 border-t border-stone-200">
+                <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</span>
+                <p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">
+                  {christinaNote && christinaNote.trim() ? christinaNote : 'Δεν υπάρχουν σημειώσεις.'}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   
 
@@ -466,6 +606,7 @@ export default function App() {
   const [stays, setStays] = useState([]);
 
   const [tasks, setTasks] = useState([]);
+  const [dayNotes, setDayNotes] = useState([]);
 
   const role = profile?.role ?? "";
 
@@ -482,6 +623,7 @@ export default function App() {
   const [viewStart, setViewStart] = useState(startOfDay(new Date()));
   const [mobileDate, setMobileDate] = useState(() => toISO(new Date()));
   const [mobileViewMode, setMobileViewMode] = useState('list');
+  const [dayNoteModalDate, setDayNoteModalDate] = useState(null);
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1400);
   const [modal, setModal] = useState(null);
   const [modalError, setModalError] = useState('');
@@ -539,6 +681,18 @@ export default function App() {
   } catch (err) {
     console.error('Failed to load housekeeping tasks:', err);
     // don't touch stays/rooms state — a broken tasks table shouldn't hide stays
+  }
+
+  try {
+    const { data: noteData, error: noteError } = await supabase
+      .from("day_notes")
+      .select("*");
+
+    if (noteError) throw noteError;
+    setDayNotes(noteData ?? []);
+  } catch (err) {
+    console.error('Failed to load day notes:', err);
+    // don't touch stays/rooms/tasks state — a broken day_notes table shouldn't hide anything else
   } finally {
     setSyncing(false);
     setLoading(false);
@@ -556,6 +710,25 @@ export default function App() {
                 event: "*",
                 schema: "public",
                 table: "housekeeping_tasks",
+            },
+            loadData
+        )
+        .subscribe();
+
+    return () => supabase.removeChannel(channel);
+
+}, [loadData]);
+
+  useEffect(() => {
+
+    const channel = supabase
+        .channel("day-notes")
+        .on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "day_notes",
             },
             loadData
         )
@@ -646,7 +819,7 @@ export default function App() {
     if (!canCreate) return;
     setModal({
       mode: 'add',
-      draft: { id: null, roomId, type: 'stay', guestName: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
+      draft: { id: null, roomId, type: 'stay', guestName: '', extraSpaces: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
     });
     setModalError('');
   }
@@ -675,8 +848,8 @@ export default function App() {
       setModalError('You do not have permission to make this change.');
       return;
     }
-    if (!d.guestName || !d.guestName.trim()) {
-      setModalError(d.type === 'blocked' ? 'Reason is required.' : 'Το όνομα του πελάτη είναι υποχρεωτικό.');
+    if (d.type === 'blocked' && (!d.guestName || !d.guestName.trim())) {
+      setModalError('Reason is required.');
       return;
     }
     if (!(d.checkOut > d.checkIn)) {
@@ -721,6 +894,8 @@ export default function App() {
 
   const today = startOfDay(new Date());
   const todayISO = toISO(today);
+  function noteFor(dateISO, villa) { return dayNotes.find((n) => n.note_date === dateISO && n.villa === villa)?.note ?? ''; }
+  function hasAnyNote(dateISO) { return !!(noteFor(dateISO, 'karayiannis').trim() || noteFor(dateISO, 'christina').trim()); }
   const viewDays = Array.from({ length: numDays }, (_, i) => addDays(viewStart, i));
   const viewEnd = addDays(viewStart, numDays);
 
@@ -811,8 +986,11 @@ export default function App() {
             todayISO={todayISO}
             canCreate={canCreate}
             canManageTasks={canManageTasks}
+            isAdmin={isAdmin}
+            hasNote={hasAnyNote(mobileDate)}
             onOpenRoom={handleMobileRoomOpen}
             onOpenTask={openTaskModal}
+            onOpenNote={() => setDayNoteModalDate(mobileDate)}
             onPrevDay={() => setMobileDate(toISO(addDays(parseISO(mobileDate), -1)))}
             onNextDay={() => setMobileDate(toISO(addDays(parseISO(mobileDate), 1)))}
             onToday={() => setMobileDate(toISO(new Date()))}
@@ -830,9 +1008,27 @@ export default function App() {
                   const iso = toISO(d);
                   const isToday = iso === todayISO;
                   return (
-                    <div key={iso} className={`flex flex-col items-center justify-center border-l border-stone-800 ${isToday ? 'bg-amber-500 text-stone-900' : 'text-stone-300'}`} style={{ width: colWidth, flexShrink: 0, height: HEADER_HEIGHT }}>
+                    <div key={iso} className={`relative flex flex-col items-center justify-center border-l border-stone-800 ${isToday ? 'bg-amber-500 text-stone-900' : 'text-stone-300'}`} style={{ width: colWidth, flexShrink: 0, height: HEADER_HEIGHT }}>
                       <span className="font-mono text-[9px] uppercase tracking-wide opacity-80">{fmtWeekday(d)}</span>
                       <span className="font-serif text-sm sm:text-base font-semibold leading-none mt-0.5">{d.getDate()}</span>
+                      {isAdmin && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDayNoteModalDate(iso); }}
+                          title="Σημειώσεις της ημέρας"
+                          className="absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-black/20 hover:bg-black/40"
+                        >
+                          <Plus size={9} />
+                        </button>
+                      )}
+                      {!isAdmin && hasAnyNote(iso) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDayNoteModalDate(iso); }}
+                          title="Σημειώσεις της ημέρας"
+                          className="absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center"
+                        >
+                          <StickyNote size={10} />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -965,7 +1161,8 @@ export default function App() {
 
                           <div className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold truncate">
                             {stay.type === 'blocked' ? <Wrench size={11} /> : <User size={11} />}
-                            <span className="truncate">{stay.guestName}</span>
+                            <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '—')}</span>
+                            {stay.notes && stay.notes.trim() && <StickyNote size={10} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                           </div>
                           <div className="text-[10px] sm:text-[11px] opacity-80 truncate font-mono">
                             {stay.type === 'blocked' ? 'Out of service' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
@@ -979,7 +1176,9 @@ export default function App() {
                       const idx = dayIndexBetween(viewStart, d);
                       const cellTasks = tasks.filter((t) => t.room_id === room.id && t.task_date === iso);
                       const badges = taskBadges(cellTasks);
-                      if (!badges && !canManageTasks) return null;
+                      const hasReservation = stays.some((s) => s.roomId === room.id && s.type === 'stay' && iso >= s.checkIn && iso < s.checkOut);
+                      const showPlus = canManageTasks && hasReservation;
+                      if (!badges && !showPlus) return null;
                       return (
                         <div
                           key={`task-${iso}`}
@@ -996,7 +1195,7 @@ export default function App() {
                               {badges}
                             </span>
                           ) : <span />}
-                          {canManageTasks && (
+                          {showPlus && (
                             <button
                               onClick={(e) => { e.stopPropagation(); openTaskModal(room, iso); }}
                               title="Add housekeeping task"
@@ -1044,6 +1243,17 @@ export default function App() {
           tasks={tasks}
           canEdit={canManageTasks}
           onClose={closeTaskModal}
+        />
+      )}
+
+      {dayNoteModalDate && (
+        <DayNoteModal
+          date={dayNoteModalDate}
+          karayiannisNote={noteFor(dayNoteModalDate, 'karayiannis')}
+          christinaNote={noteFor(dayNoteModalDate, 'christina')}
+          canEdit={isAdmin}
+          onSave={(villa, text) => saveDayNote(dayNoteModalDate, villa, text)}
+          onClose={() => setDayNoteModalDate(null)}
         />
       )}
     </div>

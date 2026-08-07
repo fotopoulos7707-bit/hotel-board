@@ -46,8 +46,6 @@ async function deleteStay(id) {
   if (error) throw error;
 }
 
-
-
 const STAYS_KEY = 'hotel-stays-v1';
 const ROOMS_KEY = 'hotel-rooms-v1';
 
@@ -63,8 +61,6 @@ function dayIndexBetween(a, b) { return Math.round((startOfDay(b) - startOfDay(a
 function fmtWeekday(d) { return d.toLocaleDateString(undefined, { weekday: 'short' }); }
 function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: 'short' }); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
-
-
 
 // Custom rooms grouped by square meters: 40m^2, 60m^2, then 80m^2
 const defaultRooms = [
@@ -90,8 +86,6 @@ const defaultRooms = [
   { id: 5, name: '5', size: '-' },
   { id: 6, name: '6', size: '-' }
 ];
-
-
 
 async function safeGet(key, shared) {
   if (!window.storage) return null;
@@ -127,7 +121,6 @@ async function deleteTask(taskId) {
   if (error) throw error;
 }
 
-// upserts the note for a given date; clearing it to empty deletes the row instead of storing blank text
 const VILLAS = { karayiannis: 'Karayiannis Villas', christina: 'Villa Christina' };
 
 async function saveDayNote(dateISO, villa, text) {
@@ -143,7 +136,6 @@ async function saveDayNote(dateISO, villa, text) {
   if (error) throw error;
 }
 
-// task_type is always stored as the canonical 'sheet' / 'towel' (required by the DB check constraint).
 function taskBadges(tasksForCell) {
   const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
   const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
@@ -152,7 +144,6 @@ function taskBadges(tasksForCell) {
 
 const TASK_LABELS = { sheet: 'Σεντόνια', towel: 'Πετσέτες' };
 
-// white halo around the text so red-on-any-background stays readable
 const TEXT_OUTLINE_STYLE = {
   textShadow: '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px rgba(255,255,255,0.9)',
 };
@@ -596,8 +587,6 @@ function DayNoteModal({ date, karayiannisNote, christinaNote, canEdit, onSave, o
 }
 
 export default function App() {
-  
-
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -607,6 +596,16 @@ export default function App() {
 
   const [tasks, setTasks] = useState([]);
   const [dayNotes, setDayNotes] = useState([]);
+
+  // HERE ARE THE MISSING FUNCTIONS
+  const hasAnyNote = (dateISO) => {
+    return dayNotes.some(n => n.note_date === dateISO && n.note && n.note.trim() !== '');
+  };
+
+  const noteFor = (dateISO, villa) => {
+    const n = dayNotes.find(n => n.note_date === dateISO && n.villa === villa);
+    return n ? n.note : '';
+  };
 
   const role = profile?.role ?? "";
 
@@ -619,8 +618,7 @@ export default function App() {
   const canDelete = isAdmin;
   const canManageTasks = isAdmin;
   
-
-  const [viewStart, setViewStart] = useState(startOfDay(new Date()));
+  const [viewStart, setViewStart] = useState(() => addDays(startOfDay(new Date()), -7));
   const [mobileDate, setMobileDate] = useState(() => toISO(new Date()));
   const [mobileViewMode, setMobileViewMode] = useState('list');
   const [dayNoteModalDate, setDayNoteModalDate] = useState(null);
@@ -632,8 +630,6 @@ export default function App() {
   const [lastSynced, setLastSynced] = useState(null);
   const [storageOK, setStorageOK] = useState(true);
 
-  
-
   useEffect(() => {
     function onResize() { setWindowWidth(window.innerWidth); }
     window.addEventListener('resize', onResize);
@@ -641,67 +637,64 @@ export default function App() {
   }, []);
 
   const loadData = useCallback(async () => {
-  setSyncing(true);
+    setSyncing(true);
 
-  try {
-    const roomsRaw = await safeGet(ROOMS_KEY, true);
+    try {
+      const roomsRaw = await safeGet(ROOMS_KEY, true);
 
-    const { data, error } = await supabase
-      .from("stays")
-      .select("*");
+      const { data, error } = await supabase
+        .from("stays")
+        .select("*");
 
-    if (error) throw error;
+      if (error) throw error;
 
-    const staysRaw = data.map(dbToStay);
+      const staysRaw = data.map(dbToStay);
 
-    let r = roomsRaw ? JSON.parse(roomsRaw) : null;
-    let ok = true;
+      let r = roomsRaw ? JSON.parse(roomsRaw) : null;
+      let ok = true;
 
-    if (!r || !r[0]?.size) {
-      r = defaultRooms;
-      ok = await safeSet(ROOMS_KEY, JSON.stringify(r), true);
+      if (!r || !r[0]?.size) {
+        r = defaultRooms;
+        ok = await safeSet(ROOMS_KEY, JSON.stringify(r), true);
+      }
+
+      setRooms(r);
+      setStays(staysRaw);
+      setStorageOK(ok !== false);
+      setLastSynced(new Date());
+    } catch (err) {
+      console.error('Failed to load stays:', err);
+      setStorageOK(false);
     }
 
-    setRooms(r);
-    setStays(staysRaw);
-    setStorageOK(ok !== false);
-    setLastSynced(new Date());
-  } catch (err) {
-    console.error('Failed to load stays:', err);
-    setStorageOK(false);
-  }
+    try {
+      const { data: taskData, error: taskError } = await supabase
+        .from("housekeeping_tasks")
+        .select("*");
 
-  try {
-    const { data: taskData, error: taskError } = await supabase
-      .from("housekeeping_tasks")
-      .select("*");
+      if (taskError) throw taskError;
+      setTasks(taskData ?? []);
+    } catch (err) {
+      console.error('Failed to load housekeeping tasks:', err);
+    }
 
-    if (taskError) throw taskError;
-    setTasks(taskData ?? []);
-  } catch (err) {
-    console.error('Failed to load housekeeping tasks:', err);
-    // don't touch stays/rooms state — a broken tasks table shouldn't hide stays
-  }
+    try {
+      const { data: noteData, error: noteError } = await supabase
+        .from("day_notes")
+        .select("*");
 
-  try {
-    const { data: noteData, error: noteError } = await supabase
-      .from("day_notes")
-      .select("*");
+      if (noteError) throw noteError;
+      setDayNotes(noteData ?? []);
+    } catch (err) {
+      console.error('Failed to load day notes:', err);
+    } finally {
+      setSyncing(false);
+      setLoading(false);
+    }
 
-    if (noteError) throw noteError;
-    setDayNotes(noteData ?? []);
-  } catch (err) {
-    console.error('Failed to load day notes:', err);
-    // don't touch stays/rooms/tasks state — a broken day_notes table shouldn't hide anything else
-  } finally {
-    setSyncing(false);
-    setLoading(false);
-  }
-
-}, []);
+  }, []);
 
   useEffect(() => {
-
     const channel = supabase
         .channel("housekeeping")
         .on(
@@ -714,13 +707,10 @@ export default function App() {
             loadData
         )
         .subscribe();
-
     return () => supabase.removeChannel(channel);
-
-}, [loadData]);
+  }, [loadData]);
 
   useEffect(() => {
-
     const channel = supabase
         .channel("day-notes")
         .on(
@@ -733,87 +723,67 @@ export default function App() {
             loadData
         )
         .subscribe();
-
     return () => supabase.removeChannel(channel);
-
-}, [loadData]);
-
+  }, [loadData]);
 
   useEffect(() => {
-  const channel = supabase
-    .channel("stays")
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "stays",
-      },
-      () => {
+    const channel = supabase
+      .channel("stays")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "stays",
+        },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!user) return;
+    loadData();
+    function onVis() {
+      if (document.visibilityState === "visible") {
         loadData();
       }
-    )
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, [loadData]);
+    }
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user, loadData]);
 
   useEffect(() => {
-  if (!user) return;
-
-  loadData();
-
-  function onVis() {
-    if (document.visibilityState === "visible") {
-      loadData();
+    async function loadSession() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setUser(session.user);
+      }
     }
-  }
-
-  document.addEventListener("visibilitychange", onVis);
-
-  return () => {
-    document.removeEventListener("visibilitychange", onVis);
-  };
-}, [user, loadData]);
-
-  // clearInterval(iv);
-  useEffect(() => {
-  async function loadSession() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (session) {
-      setUser(session.user);
-    }
-  }
-
-  loadSession();
+    loadSession();
   }, []);
 
   useEffect(() => {
-  if (!user) return;
-
-  async function loadProfile() {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-    
-    if (error) {
-      console.error(error);
-      return;
+    if (!user) return;
+    async function loadProfile() {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
+      if (error) {
+        console.error(error);
+        return;
+      }
+      setProfile(data);
     }
-
-    setProfile(data);
-  }
-
-  loadProfile();
+    loadProfile();
   }, [user]);
-
 
   function openAddModal(roomId, dateISO) {
     if (!canCreate) return;
@@ -863,7 +833,7 @@ export default function App() {
     }
     try {
       await saveStay(d);
-      closeModal(); // realtime subscription refreshes `stays` for everyone
+      closeModal();
     } catch (err) {
       console.error(err);
       setModalError(err.message || 'Failed to save.');
@@ -883,8 +853,14 @@ export default function App() {
   }
 
   const isMobile = windowWidth < 700;
-  const numDays = isMobile ? 7 : 14;
-  // p-3/sm:p-6 outer padding (12px or 24px per side) + 1px border per side
+  
+  const todayForGrid = startOfDay(new Date());
+  const todayISO = toISO(todayForGrid);
+
+  const endOfNextMonth = new Date(todayForGrid.getFullYear(), todayForGrid.getMonth() + 2, 0);
+  const daysToNextMonth = dayIndexBetween(viewStart, endOfNextMonth) + 1;
+  const numDays = Math.max(daysToNextMonth, 21);
+
   const containerPadding = (isMobile ? 12 : 24) * 2 + 2;
   const availableWidth = Math.max(280, windowWidth - containerPadding);
   const MIN_COL_WIDTH = isMobile ? 34 : 60;
@@ -892,10 +868,6 @@ export default function App() {
   const colWidth = Math.max(MIN_COL_WIDTH, Math.floor((availableWidth - roomColWidth) / numDays));
   const rowHeight = isMobile ? 58 : 68;
 
-  const today = startOfDay(new Date());
-  const todayISO = toISO(today);
-  function noteFor(dateISO, villa) { return dayNotes.find((n) => n.note_date === dateISO && n.villa === villa)?.note ?? ''; }
-  function hasAnyNote(dateISO) { return !!(noteFor(dateISO, 'karayiannis').trim() || noteFor(dateISO, 'christina').trim()); }
   const viewDays = Array.from({ length: numDays }, (_, i) => addDays(viewStart, i));
   const viewEnd = addDays(viewStart, numDays);
 
@@ -905,7 +877,15 @@ export default function App() {
   const blockedCount = stays.filter(s => s.type === 'blocked' && todayISO >= s.checkIn && todayISO < s.checkOut).length;
 
   if (!user) {
-  return <Auth onLogin={setUser} />;
+    return <Auth onLogin={setUser} />;
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-xl text-stone-500 font-serif">
+        Loading board...
+      </div>
+    );
   }
 
   return (
@@ -938,11 +918,13 @@ export default function App() {
             >
               Logout
             </button>
-            <div className="flex items-center rounded-md border border-stone-300 overflow-hidden">
-              <button onClick={() => setViewStart(addDays(viewStart, -numDays))} className="p-2 hover:bg-stone-100"><ChevronLeft size={16} /></button>
-              <button onClick={() => setViewStart(startOfDay(new Date()))} className="px-3 py-2 text-xs font-semibold border-x border-stone-300 hover:bg-stone-100">Today</button>
-              <button onClick={() => setViewStart(addDays(viewStart, numDays))} className="p-2 hover:bg-stone-100"><ChevronRight size={16} /></button>
-            </div>
+            {!isMobile && (
+              <div className="flex items-center rounded-md border border-stone-300 overflow-hidden">
+                <button onClick={() => setViewStart(addDays(viewStart, -30))} className="p-2 hover:bg-stone-100"><ChevronLeft size={16} /></button>
+                <button onClick={() => setViewStart(addDays(startOfDay(new Date()), -7))} className="px-3 py-2 text-xs font-semibold border-x border-stone-300 hover:bg-stone-100">Today</button>
+                <button onClick={() => setViewStart(addDays(viewStart, 30))} className="p-2 hover:bg-stone-100"><ChevronRight size={16} /></button>
+              </div>
+            )}
             {canCreate && (
                 <button
                   onClick={() => openAddModal(rooms[0]?.id ?? 1, todayISO)}
@@ -1047,14 +1029,6 @@ export default function App() {
                   const idx = dayIndexBetween(viewStart, parseISO(a.checkOut));
                   if (idx >= 0 && idx <= numDays) turnovers.push(idx);
                 }
-              }
-              
-              if (loading) {
-                return (
-                  <div className="flex h-screen items-center justify-center text-xl">
-                    Loading...
-                  </div>
-                );
               }
 
               const isKarayiannisStart = room.id === 12;

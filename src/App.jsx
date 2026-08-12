@@ -136,6 +136,89 @@ async function saveDayNote(dateISO, villa, text) {
   if (error) throw error;
 }
 
+function paxLabel(pax) {
+  const trimmed = (pax ?? '').toString().trim();
+  if (!trimmed) return '';
+  const n = Number(trimmed);
+  if (Number.isFinite(n) && String(n) === trimmed) {
+    return `${trimmed} ${n > 1 ? 'Πελάτες' : 'Πελάτης'}`;
+  }
+  return trimmed;
+}
+
+function initialsFor(profile) {
+  const name = (profile?.full_name || '').trim();
+  if (!name) return '?';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+async function addChecklistItem(dateISO, villa, content) {
+  const trimmed = (content || '').trim();
+  if (!trimmed) return;
+
+  const { data, error } = await supabase
+    .from('day_checklist_items')
+    .insert({
+      note_date: dateISO,
+      villa,
+      content: trimmed
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+
+
+}
+
+async function deleteChecklistItem(id) {
+  const { error } = await supabase.from('day_checklist_items').delete().eq('id', id);
+  if (error) throw error;
+}
+
+async function toggleChecklistItem(item, initials) {
+  if (item.checked) {
+    const { error } = await supabase
+      .from('day_checklist_items')
+      .update({ checked: false, checked_by: null, checked_at: null })
+      .eq('id', item.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase
+      .from('day_checklist_items')
+      .update({ checked: true, checked_by: initials, checked_at: new Date().toISOString() })
+      .eq('id', item.id);
+    if (error) throw error;
+  }
+}
+
+async function saveChecklistBatch(newItems, modifiedItems, deletedIds) {
+  if (deletedIds.length > 0) {
+    const { error } = await supabase.from('day_checklist_items').delete().in('id', deletedIds);
+    if (error) throw error;
+  }
+  
+  if (newItems.length > 0) {
+    const itemsToInsert = newItems.map(i => ({
+      note_date: i.note_date,
+      villa: i.villa,
+      content: i.content,
+      checks: i.checks || []
+    }));
+    const { error } = await supabase.from('day_checklist_items').insert(itemsToInsert);
+    if (error) throw error;
+  }
+  
+  for (const item of modifiedItems) {
+    const { error } = await supabase.from('day_checklist_items').update({
+      checks: item.checks || []
+    }).eq('id', item.id);
+    if (error) throw error;
+  }
+}
+
 function taskBadges(tasksForCell) {
   const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
   const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
@@ -266,7 +349,7 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
                         {stay.notes && stay.notes.trim() && <StickyNote size={12} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                       </div>
                       <div className="text-xs opacity-80 font-mono">
-                        {stay.type === 'blocked' ? 'Εκτός λειτουργίας' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
+                        {stay.type === 'blocked' ? 'Εκτός λειτουργίας' : paxLabel(stay.pax)}
                       </div>
                     </>
                   ) : (
@@ -317,7 +400,7 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             <div><span className="text-stone-500">Room ID</span><div className="font-medium">{rooms.find(r => r.id === draft.roomId)?.name ?? draft.roomId}</div></div>
             {isBlocked && <div><span className="text-stone-500">Reason</span><div className="font-medium">{draft.guestName}</div></div>}
             {!isBlocked && (
-              <div><span className="text-stone-500">Εξτρα Χώροι</span><div className="font-medium">{draft.extraSpaces && draft.extraSpaces.trim() ? draft.extraSpaces : '—'}</div></div>
+              <div><span className="text-stone-500">Εξτρα Χώροι</span><div className="font-medium">{draft.extraSpaces && draft.extraSpaces.trim() ? draft.extraSpaces : ' '}</div></div>
             )}
             {!isBlocked && <div><span className="text-stone-500">Πελάτες</span><div className="font-medium">{draft.pax}</div></div>}
             <div><span className="text-stone-500">Check-in</span><div className="font-medium font-mono">{draft.checkIn}</div></div>
@@ -359,14 +442,14 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             {!isBlocked && (
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Εξτρα Χώροι</label>
-                <input type="text" value={draft.extraSpaces || ''} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <input type="text" value={draft.extraSpaces || ' βοο '} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
               </div>
             )}
 
             {!isBlocked && (
-              <div className="w-24">
+              <div className="w-32">
                 <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Πελάτες</label>
-                <input type="number" min="1" max="8" value={draft.pax} onChange={(e) => field('pax', Number(e.target.value))} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <input type="text" value={draft.pax ?? ''} onChange={(e) => field('pax', e.target.value)} placeholder="π.χ. 2 ή 2+1 παιδί" className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
               </div>
             )}
 
@@ -511,20 +594,180 @@ function TaskModal({ room, date, tasks, canEdit, onClose }) {
   );
 }
 
-function DayNoteModal({ date, karayiannisNote, christinaNote, canEdit, onSave, onClose }) {
+function ChecklistSection({ items, isAdmin, currentUserId, onAdd, onDelete, onToggle }) {
+  const [newItem, setNewItem] = useState('');
+  const [error, setError] = useState('');
+
+  function handleAdd() {
+    const trimmed = newItem.trim();
+    if (!trimmed) return;
+    setError('');
+    try {
+      onAdd(trimmed);
+      setNewItem('');
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Failed to add item.');
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      {items.length === 0 ? (
+        <p className="text-stone-400 text-xs">Δεν υπάρχουν εργασίες λίστας.</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {items.map((item) => {
+            const checks = Array.isArray(item.checks) ? item.checks : [];
+            // Is this box checked by the currently logged-in user?
+            const isCheckedByMe = checks.some(c => c.user_id === currentUserId);
+
+            return (
+              <li key={item.id} className="flex items-start justify-between gap-2 bg-stone-50 border border-stone-200 rounded-md px-2.5 py-1.5">
+                <label className="flex items-start gap-2 text-sm flex-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isCheckedByMe}
+                    onChange={() => onToggle(item)}
+                    className="w-4 h-4 mt-0.5 rounded border-stone-300 flex-shrink-0 cursor-pointer"
+                  />
+                  <span className={isCheckedByMe ? 'text-stone-400 line-through' : 'text-stone-700'}>
+                    {item.content}
+                  </span>
+                </label>
+
+                {/* Show badges for ALL staff members who checked this box */}
+                <div className="flex items-center gap-1 flex-wrap flex-shrink-0 justify-end">
+                  {checks.map((chk, idx) => (
+                    <span
+                      key={chk.user_id || idx}
+                      title={chk.checked_at ? new Date(chk.checked_at).toLocaleString('el-GR') : ''}
+                      className={`text-[10px] font-mono font-semibold rounded px-1 ${
+                        chk.user_id === currentUserId 
+                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
+                          : 'bg-stone-200 text-stone-600'
+                      }`}
+                    >
+                      {chk.initials}
+                    </span>
+                  ))}
+
+                  {isAdmin && (
+                    <button onClick={() => onDelete(item.id)} className="text-rose-500 hover:text-rose-700 ml-1">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {isAdmin && (
+        <div className="flex gap-2 mt-2">
+          <input
+            type="text"
+            value={newItem}
+            onChange={(e) => setNewItem(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } }}
+            placeholder="Νέα εργασία λίστας..."
+            className="flex-1 border border-stone-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <button onClick={handleAdd} className="px-3 py-1.5 text-xs font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
+            Προσθήκη
+          </button>
+        </div>
+      )}
+      {error && <p className="text-rose-600 text-xs font-medium mt-1">{error}</p>}
+    </div>
+  );
+}
+
+function DayNoteModal({ date, karayiannisNote, christinaNote, karayiannisChecklist, christinaChecklist, isAdmin, canEdit, initials, userId, onSaveNote, onSaveChecklists, onClose }) {
   const [karayiannisText, setKarayiannisText] = useState(karayiannisNote || '');
   const [christinaText, setChristinaText] = useState(christinaNote || '');
+
+  // Helper to standardise old DB format (single check) into array format
+  const normalizeList = (list) => list.map(item => {
+    if (Array.isArray(item.checks)) return item;
+    const legacy = [];
+    if (item.checked && item.checked_by) {
+      legacy.push({ user_id: item.checked_by_id || 'legacy', initials: item.checked_by, checked_at: item.checked_at });
+    }
+    return { ...item, checks: legacy };
+  });
+
+  const [kChecklist, setKChecklist] = useState(() => normalizeList(karayiannisChecklist));
+  const [cChecklist, setCChecklist] = useState(() => normalizeList(christinaChecklist));
+  const [deletedIds, setDeletedIds] = useState([]);
+  
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  
   const dateObj = parseISO(date);
   const label = dateObj.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const handleAddLocal = (villa, content) => {
+    const newItem = { id: `temp-${uid()}`, content, checks: [], isNew: true, villa, note_date: date };
+    if (villa === 'karayiannis') setKChecklist([...kChecklist, newItem]);
+    else setCChecklist([...cChecklist, newItem]);
+  };
+
+  const handleToggleLocal = (villa, item) => {
+    const updater = (list) => list.map(i => {
+      if (i.id === item.id) {
+        const currentChecks = Array.isArray(i.checks) ? i.checks : [];
+        const existingIdx = currentChecks.findIndex(c => c.user_id === userId);
+
+        let updatedChecks;
+        if (existingIdx >= 0) {
+          // Toggle off: remove user's entry
+          updatedChecks = currentChecks.filter(c => c.user_id !== userId);
+        } else {
+          // Toggle on: add user's entry
+          updatedChecks = [
+            ...currentChecks,
+            { user_id: userId, initials: initials, checked_at: new Date().toISOString() }
+          ];
+        }
+
+        return {
+          ...i,
+          checks: updatedChecks,
+          isModified: !i.isNew
+        };
+      }
+      return i;
+    });
+    
+    if (villa === 'karayiannis') setKChecklist(updater(kChecklist));
+    else setCChecklist(updater(cChecklist));
+  };
+
+  const handleDeleteLocal = (villa, id) => {
+    if (!String(id).startsWith('temp-')) {
+      setDeletedIds([...deletedIds, id]);
+    }
+    if (villa === 'karayiannis') setKChecklist(kChecklist.filter(i => i.id !== id));
+    else setCChecklist(cChecklist.filter(i => i.id !== id));
+  };
 
   async function handleSave() {
     setError('');
     setSaving(true);
     try {
-      await onSave('karayiannis', karayiannisText);
-      await onSave('christina', christinaText);
+      if (canEdit) {
+        await onSaveNote('karayiannis', karayiannisText);
+        await onSaveNote('christina', christinaText);
+      }
+      
+      const allItems = [...kChecklist, ...cChecklist];
+      const newItems = allItems.filter(i => i.isNew);
+      const modifiedItems = allItems.filter(i => i.isModified);
+      
+      await onSaveChecklists(newItems, modifiedItems, deletedIds);
+      
       onClose();
     } catch (err) {
       console.error(err);
@@ -570,15 +813,6 @@ function DayNoteModal({ date, karayiannisNote, christinaNote, canEdit, onSave, o
                   className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
-              {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
-              <div className="flex justify-end gap-2">
-                <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
-                  Ακύρωση
-                </button>
-                <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800 disabled:opacity-50">
-                  Αποθήκευση
-                </button>
-              </div>
             </>
           ) : (
             <>
@@ -596,6 +830,41 @@ function DayNoteModal({ date, karayiannisNote, christinaNote, canEdit, onSave, o
               </div>
             </>
           )}
+
+          {/* CHECKLISTS */}
+          <div className="mt-2 pt-2 border-t border-stone-100">
+            <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Λίστα εργασιών (Karayiannis)</span>
+            <ChecklistSection
+              items={kChecklist}
+              isAdmin={isAdmin}
+              currentUserId={userId}
+              onAdd={(content) => handleAddLocal('karayiannis', content)}
+              onDelete={(id) => handleDeleteLocal('karayiannis', id)}
+              onToggle={(item) => handleToggleLocal('karayiannis', item)}
+            />
+          </div>
+          <div className="mt-2 pt-2 border-t border-stone-100">
+            <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Λίστα εργασιών (Christina)</span>
+            <ChecklistSection
+              items={cChecklist}
+              isAdmin={isAdmin}
+              currentUserId={userId}
+              onAdd={(content) => handleAddLocal('christina', content)}
+              onDelete={(id) => handleDeleteLocal('christina', id)}
+              onToggle={(item) => handleToggleLocal('christina', item)}
+            />
+          </div>
+
+          {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
+          
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+              Ακύρωση
+            </button>
+            <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800 disabled:opacity-50">
+              Αποθήκευση
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -612,15 +881,24 @@ export default function App() {
 
   const [tasks, setTasks] = useState([]);
   const [dayNotes, setDayNotes] = useState([]);
+  const [checklistItems, setChecklistItems] = useState([]);
 
   // HERE ARE THE MISSING FUNCTIONS
   const hasAnyNote = (dateISO) => {
-    return dayNotes.some(n => n.note_date === dateISO && n.note && n.note.trim() !== '');
+    const hasTextNote = dayNotes.some(n => n.note_date === dateISO && n.note && n.note.trim() !== '');
+    const hasChecklist = checklistItems.some(c => c.note_date === dateISO);
+    return hasTextNote || hasChecklist;
   };
 
   const noteFor = (dateISO, villa) => {
     const n = dayNotes.find(n => n.note_date === dateISO && n.villa === villa);
     return n ? n.note : '';
+  };
+
+  const checklistFor = (dateISO, villa) => {
+    return checklistItems
+      .filter(c => c.note_date === dateISO && c.villa === villa)
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
   };
 
   const role = profile?.role ?? "";
@@ -703,6 +981,17 @@ export default function App() {
       setDayNotes(noteData ?? []);
     } catch (err) {
       console.error('Failed to load day notes:', err);
+    }
+
+    try {
+      const { data: checklistData, error: checklistError } = await supabase
+        .from("day_checklist_items")
+        .select("*");
+
+      if (checklistError) throw checklistError;
+      setChecklistItems(checklistData ?? []);
+    } catch (err) {
+      console.error('Failed to load checklist items:', err);
     } finally {
       setSyncing(false);
       setLoading(false);
@@ -735,6 +1024,22 @@ export default function App() {
                 event: "*",
                 schema: "public",
                 table: "day_notes",
+            },
+            loadData
+        )
+        .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [loadData]);
+
+  useEffect(() => {
+    const channel = supabase
+        .channel("day-checklist-items")
+        .on(
+            "postgres_changes",
+            {
+                event: "*",
+                schema: "public",
+                table: "day_checklist_items",
             },
             loadData
         )
@@ -805,7 +1110,7 @@ export default function App() {
     if (!canCreate) return;
     setModal({
       mode: 'add',
-      draft: { id: null, roomId, type: 'stay', guestName: '', extraSpaces: '', pax: 1, checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
+      draft: { id: null, roomId, type: 'stay', guestName: '', extraSpaces: '', pax: '', checkIn: dateISO, checkOut: toISO(addDays(parseISO(dateISO), 1)), notes: '' },
     });
     setModalError('');
   }
@@ -1151,7 +1456,7 @@ export default function App() {
                             {stay.notes && stay.notes.trim() && <StickyNote size={10} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                           </div>
                           <div className="text-[10px] sm:text-[11px] opacity-80 truncate font-mono">
-                            {stay.type === 'blocked' ? 'Out of service' : `${stay.pax} ${stay.pax > 1 ? 'Πελάτες' : 'Πελάτης'}`}
+                            {stay.type === 'blocked' ? 'Out of service' : paxLabel(stay.pax)}
                           </div>
                         </div>
                       );
@@ -1237,8 +1542,14 @@ export default function App() {
           date={dayNoteModalDate}
           karayiannisNote={noteFor(dayNoteModalDate, 'karayiannis')}
           christinaNote={noteFor(dayNoteModalDate, 'christina')}
+          karayiannisChecklist={checklistFor(dayNoteModalDate, 'karayiannis')}
+          christinaChecklist={checklistFor(dayNoteModalDate, 'christina')}
+          isAdmin={isAdmin}
           canEdit={isAdmin}
-          onSave={(villa, text) => saveDayNote(dayNoteModalDate, villa, text)}
+          initials={initialsFor(profile)}
+          userId={user.id}
+          onSaveNote={(villa, text) => saveDayNote(dayNoteModalDate, villa, text)}
+          onSaveChecklists={saveChecklistBatch}
           onClose={() => setDayNoteModalDate(null)}
         />
       )}

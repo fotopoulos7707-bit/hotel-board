@@ -442,7 +442,7 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             {!isBlocked && (
               <div>
                 <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Εξτρα Χώροι</label>
-                <input type="text" value={draft.extraSpaces || ' βοο '} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <input type="text" value={draft.extraSpaces || '  '} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
               </div>
             )}
 

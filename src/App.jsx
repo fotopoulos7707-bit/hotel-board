@@ -345,7 +345,7 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
                     <>
                       <div className="flex items-center gap-1 font-semibold text-sm truncate">
                         {stay.type === 'blocked' ? <Wrench size={13} /> : <User size={13} />}
-                        <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '—')}</span>
+                        <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '')}</span>
                         {stay.notes && stay.notes.trim() && <StickyNote size={12} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                       </div>
                       <div className="text-xs opacity-80 font-mono">
@@ -441,7 +441,7 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
 
             {!isBlocked && (
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Εξτρα Χώροι</label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Εξτρα Χώροι - Σημειώσεις</label>
                 <input type="text" value={draft.extraSpaces || '  '} onChange={(e) => field('extraSpaces', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
               </div>
             )}
@@ -454,7 +454,7 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
             )}
 
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Notes</label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Σημειώσεις (Ιδιωτικό)</label>
               <textarea rows={2} value={draft.notes} onChange={(e) => field('notes', e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
             </div>
 
@@ -1452,7 +1452,7 @@ export default function App() {
 
                           <div className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold truncate">
                             {stay.type === 'blocked' ? <Wrench size={11} /> : <User size={11} />}
-                            <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '—')}</span>
+                            <span className="truncate">{stay.type === 'blocked' ? stay.guestName : (stay.extraSpaces && stay.extraSpaces.trim() ? stay.extraSpaces : '')}</span>
                             {stay.notes && stay.notes.trim() && <StickyNote size={10} className="flex-shrink-0 opacity-80" title={stay.notes} />}
                           </div>
                           <div className="text-[10px] sm:text-[11px] opacity-80 truncate font-mono">

@@ -62,6 +62,28 @@ function fmtWeekday(d) { return d.toLocaleDateString(undefined, { weekday: 'shor
 function fmtMonth(d) { return d.toLocaleDateString(undefined, { month: 'short' }); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
+// Task badge labels + rendering. NOTE: these did not exist in the source this file was
+// recovered from (taskBadges/TASK_LABELS/TEXT_OUTLINE_STYLE were referenced but never
+// defined, causing a ReferenceError at render time). Reconstructed from usage: the legend
+// at the bottom of the board promises a blue square for towels and a red square for sheets,
+// and TaskModal lists tasks with the same two categories. Verify this matches what you want.
+const TASK_LABELS = {
+  sheet: 'Σεντόνια',
+  towel: 'Πετσέτες',
+};
+
+function taskBadges(cellTasks) {
+  const housekeepingTasks = cellTasks.filter(t => !CHECKLIST_TASK_TYPES.has(t.task_type));
+  const hasTowel = housekeepingTasks.some(t => t.task_type === 'towel');
+  const hasSheet = housekeepingTasks.some(t => t.task_type === 'sheet');
+  if (!hasTowel && !hasSheet) return null;
+  return `${hasTowel ? '\u{1F7E6}' : ''}${hasSheet ? '\u{1F7E5}' : ''}`;
+}
+
+const TEXT_OUTLINE_STYLE = {
+  textShadow: '0 0 2px rgba(255,255,255,0.9), 0 0 2px rgba(255,255,255,0.9), 0 0 2px rgba(255,255,255,0.9)',
+};
+
 // Custom rooms grouped by square meters: 40m^2, 60m^2, then 80m^2
 const defaultRooms = [
   // 40m^2 Group
@@ -98,26 +120,84 @@ async function safeSet(key, value, shared) {
   catch (e) { return false; }
 }
 
+const CHECKLISTS = [
+  { key: 'departures', label: 'Αναχωρήσεις', icon: '↗' },
+  { key: 'small_changes', label: 'Μικρές Αλλαγές', icon: '●' },
+  { key: 'large_changes', label: 'Μεγάλες Αλλαγές', icon: '◆' },
+  { key: 'trash', label: 'Σκουπίδια', icon: '♻' },
+  { key: 'nets_grates', label: 'Απόχη & Σχάρες', icon: '▦' },
+  { key: 'turnovers', label: 'Αναχωρήσεις & Αφίξεις', icon: '↔' },
+  { key: 'arrivals', label: 'Αφίξεις', icon: '↙' },
+];
+
+const CHECKLIST_KEYS = new Set(CHECKLISTS.map(c => c.key));
+const CHECKLIST_TASK_TYPES = new Set(CHECKLISTS.map(c => `checklist:${c.key}`));
+
+function taskTypeForChecklist(key) {
+  return `checklist:${key}`;
+}
+
+function checklistKeyFromTask(taskType) {
+  if (!taskType) return null;
+  const key = taskType.startsWith('checklist:') ? taskType.slice('checklist:'.length) : null;
+  return key && CHECKLIST_KEYS.has(key) ? key : null;
+}
+
+function getStayEventsForDate(stays, roomId, date) {
+  const departure = stays.find(s => s.roomId === roomId && s.type === 'stay' && s.checkOut === date);
+  const arrival = stays.find(s => s.roomId === roomId && s.type === 'stay' && s.checkIn === date);
+  const occupied = stays.some(s => s.roomId === roomId && s.type === 'stay' && date >= s.checkIn && date < s.checkOut);
+  return { departure, arrival, occupied };
+}
+
+function deriveChecklistKeysForRoom(stays, tasks, roomId, date) {
+  const keys = new Set();
+  const { departure, arrival, occupied } = getStayEventsForDate(stays, roomId, date);
+
+  if (departure && arrival && departure.id !== arrival.id) keys.add('turnovers');
+  else if (departure) keys.add('departures');
+  else if (arrival) keys.add('arrivals');
+
+  if (occupied) {
+    keys.add('trash');
+    keys.add('nets_grates');
+  }
+
+  const cellTasks = tasks.filter(t => t.room_id === roomId && t.task_date === date);
+  const housekeepingTasks = cellTasks.filter(t => !CHECKLIST_TASK_TYPES.has(t.task_type));
+  const hasTowel = housekeepingTasks.some(t => t.task_type === 'towel');
+  const hasSheet = housekeepingTasks.some(t => t.task_type === 'sheet');
+  if (hasTowel && !hasSheet && housekeepingTasks.length === 1) keys.add('small_changes');
+  if (housekeepingTasks.length > 1) keys.add('large_changes');
+
+  // Explicit checklist-origin tasks also count, so manual checklist edits are mirrored back.
+  for (const task of cellTasks) {
+    const key = checklistKeyFromTask(task.task_type);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
 async function addTask(roomId, date, taskType) {
-  if (!date || !roomId || !taskType || !taskType.trim()) return;
-
-  const { error } = await supabase
-    .from("housekeeping_tasks")
-    .insert({
-      room_id: roomId,
-      task_type: taskType.trim().toLowerCase(),
-      task_date: date,
-    });
-
+  if (!date || !roomId || !taskType || !String(taskType).trim()) return null;
+  const normalized = String(taskType).trim().toLowerCase();
+  const { data, error } = await supabase
+    .from('housekeeping_tasks')
+    .insert({ room_id: roomId, task_type: normalized, task_date: date })
+    .select()
+    .single();
   if (error) throw error;
+  return data;
+}
+
+async function addTaskIfMissing(roomId, date, taskType, tasks) {
+  const exists = tasks.some(t => t.room_id === roomId && t.task_date === date && t.task_type === taskType);
+  if (exists) return null;
+  return addTask(roomId, date, taskType);
 }
 
 async function deleteTask(taskId) {
-  const { error } = await supabase
-    .from("housekeeping_tasks")
-    .delete()
-    .eq("id", taskId);
-
+  const { error } = await supabase.from('housekeeping_tasks').delete().eq('id', taskId);
   if (error) throw error;
 }
 
@@ -126,13 +206,14 @@ const VILLAS = { karayiannis: 'Karayiannis Villas', christina: 'Villa Christina'
 async function saveDayNote(dateISO, villa, text) {
   const trimmed = (text || '').trim();
   if (!trimmed) {
-    const { error } = await supabase.from("day_notes").delete().eq("note_date", dateISO).eq("villa", villa);
+    const { error } = await supabase.from('day_notes').delete().eq('note_date', dateISO).eq('villa', villa);
     if (error) throw error;
     return;
   }
-  const { error } = await supabase
-    .from("day_notes")
-    .upsert({ note_date: dateISO, villa, note: trimmed }, { onConflict: 'note_date,villa' });
+  const { error } = await supabase.from('day_notes').upsert(
+    { note_date: dateISO, villa, note: trimmed },
+    { onConflict: 'note_date,villa' }
+  );
   if (error) throw error;
 }
 
@@ -140,9 +221,7 @@ function paxLabel(pax) {
   const trimmed = (pax ?? '').toString().trim();
   if (!trimmed) return '';
   const n = Number(trimmed);
-  if (Number.isFinite(n) && String(n) === trimmed) {
-    return `${trimmed} ${n > 1 ? 'Πελάτες' : 'Πελάτης'}`;
-  }
+  if (Number.isFinite(n) && String(n) === trimmed) return `${trimmed} ${n > 1 ? 'Πελάτες' : 'Πελάτης'}`;
   return trimmed;
 }
 
@@ -154,82 +233,68 @@ function initialsFor(profile) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-async function addChecklistItem(dateISO, villa, content) {
-  const trimmed = (content || '').trim();
-  if (!trimmed) return;
+async function insertChecklistRoom(dateISO, checklistKey, roomId) {
+  const content = String(roomId);
+  const { data: existing, error: findError } = await supabase
+    .from('day_checklist_items')
+    .select('id')
+    .eq('note_date', dateISO)
+    .eq('villa', checklistKey)
+    .eq('content', content)
+    .limit(1);
+  if (findError) throw findError;
+  if (existing?.length) return existing[0];
 
   const { data, error } = await supabase
     .from('day_checklist_items')
-    .insert({
-      note_date: dateISO,
-      villa,
-      content: trimmed
-    })
+    .insert({ note_date: dateISO, villa: checklistKey, content, checks: [] })
     .select()
     .single();
-
   if (error) throw error;
-
-
+  return data;
 }
 
-async function deleteChecklistItem(id) {
+async function deleteChecklistRoom(id) {
   const { error } = await supabase.from('day_checklist_items').delete().eq('id', id);
   if (error) throw error;
 }
 
-async function toggleChecklistItem(item, initials) {
-  if (item.checked) {
-    const { error } = await supabase
-      .from('day_checklist_items')
-      .update({ checked: false, checked_by: null, checked_at: null })
-      .eq('id', item.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase
-      .from('day_checklist_items')
-      .update({ checked: true, checked_by: initials, checked_at: new Date().toISOString() })
-      .eq('id', item.id);
-    if (error) throw error;
-  }
+async function updateChecklistChecks(itemId, userId, initials) {
+  const { data: item, error: readError } = await supabase
+    .from('day_checklist_items')
+    .select('id, checks')
+    .eq('id', itemId)
+    .single();
+  if (readError) throw readError;
+
+  const checks = Array.isArray(item.checks) ? item.checks : [];
+  const mine = checks.some(c => c.user_id === userId);
+  const nextChecks = mine
+    ? checks.filter(c => c.user_id !== userId)
+    : [...checks, { user_id: userId, initials, checked_at: new Date().toISOString() }];
+
+  const { error } = await supabase
+    .from('day_checklist_items')
+    .update({ checks: nextChecks })
+    .eq('id', itemId);
+  if (error) throw error;
 }
 
-async function saveChecklistBatch(newItems, modifiedItems, deletedIds) {
-  if (deletedIds.length > 0) {
-    const { error } = await supabase.from('day_checklist_items').delete().in('id', deletedIds);
-    if (error) throw error;
-  }
-  
-  if (newItems.length > 0) {
-    const itemsToInsert = newItems.map(i => ({
-      note_date: i.note_date,
-      villa: i.villa,
-      content: i.content,
-      checks: i.checks || []
-    }));
-    const { error } = await supabase.from('day_checklist_items').insert(itemsToInsert);
-    if (error) throw error;
-  }
-  
-  for (const item of modifiedItems) {
-    const { error } = await supabase.from('day_checklist_items').update({
-      checks: item.checks || []
-    }).eq('id', item.id);
-    if (error) throw error;
-  }
+async function removeChecklistAndMirror(item, tasks) {
+  const key = item.villa;
+  const roomId = Number(item.content);
+  await deleteChecklistRoom(item.id);
+  const mirrorType = taskTypeForChecklist(key);
+  const matching = tasks.filter(t => t.room_id === roomId && t.task_date === item.note_date && t.task_type === mirrorType);
+  for (const task of matching) await deleteTask(task.id);
 }
 
-function taskBadges(tasksForCell) {
-  const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
-  const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
-  return `${hasSheet ? '\u{1F7E5}' : ''}${hasTowel ? '\u{1F7E6}' : ''}`;
+async function mirrorChecklistToBoard(item, tasks) {
+  const key = item.villa;
+  const roomId = Number(item.content);
+  if (!CHECKLIST_KEYS.has(key) || !Number.isFinite(roomId)) return;
+  await addTaskIfMissing(roomId, item.note_date, taskTypeForChecklist(key), tasks);
 }
-
-const TASK_LABELS = { sheet: 'Σεντόνια', towel: 'Πετσέτες' };
-
-const TEXT_OUTLINE_STYLE = {
-  textShadow: '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px rgba(255,255,255,0.9)',
-};
 
 function getStayLook(stay, todayISO) {
   if (stay.type === 'blocked') {
@@ -287,7 +352,7 @@ function MobileDayList({ rooms, stays, tasks, date, todayISO, canCreate, canMana
           const stay = stays.find((s) => s.roomId === room.id && date >= s.checkIn && date < s.checkOut);
           const departingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkOut === date);
           const arrivingStay = stays.find((s) => s.roomId === room.id && s.type === 'stay' && s.checkIn === date);
-          
+
           // Check if today is the last night (i.e. checkOut is tomorrow)
           const tomorrowISO = toISO(addDays(parseISO(date), 1));
           const isLastNight = stay && stay.type === 'stay' && stay.checkOut === tomorrowISO;
@@ -484,387 +549,161 @@ function StayModal({ mode, draft, setDraft, rooms, role, error, onSave, onDelete
   );
 }
 
-function TaskModal({ room, date, tasks, canEdit, onClose }) {
+function TaskModal({ room, date, tasks, canEdit, onClose, onRefresh }) {
   const [sheetChecked, setSheetChecked] = useState(false);
   const [towelChecked, setTowelChecked] = useState(false);
   const [error, setError] = useState('');
-  const tasksForCell = tasks.filter((t) => t.room_id === room.id && t.task_date === date);
-  const hasSheet = tasksForCell.some((t) => t.task_type === 'sheet');
-  const hasTowel = tasksForCell.some((t) => t.task_type === 'towel');
+  const tasksForCell = tasks.filter(t => t.room_id === room.id && t.task_date === date && !CHECKLIST_TASK_TYPES.has(t.task_type));
+  const hasSheet = tasksForCell.some(t => t.task_type === 'sheet');
+  const hasTowel = tasksForCell.some(t => t.task_type === 'towel');
 
   async function handleAdd() {
     const types = [];
     if (sheetChecked && !hasSheet) types.push('sheet');
     if (towelChecked && !hasTowel) types.push('towel');
-    if (types.length === 0) {
-      setError('Επιλέξτε τουλάχιστον μία εργασία.');
-      return;
-    }
+    if (!types.length) { setError('Επιλέξτε τουλάχιστον μία εργασία.'); return; }
     setError('');
     try {
-      for (const t of types) {
-        await addTask(room.id, date, t);
-      }
+      for (const type of types) await addTask(room.id, date, type);
       setSheetChecked(false);
       setTowelChecked(false);
+      await onRefresh();
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to add task.');
-    }
-  }
-
-  async function handleDelete(id) {
-    setError('');
-    try {
-      await deleteTask(id);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to delete task.');
+      setError(err.message || 'Αποτυχία προσθήκης εργασίας.');
     }
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
-          <div>
-            <h2 className="font-serif text-lg font-semibold text-stone-900">Housekeeping</h2>
-            <p className="text-xs text-stone-500 font-mono mt-0.5">{room.name} &middot; {date}</p>
-          </div>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
-            <X size={20} />
-          </button>
+          <div><h2 className="font-serif text-lg font-semibold text-stone-900">Housekeeping</h2><p className="text-xs text-stone-500 font-mono mt-0.5">{room.name} · {date}</p></div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700"><X size={20} /></button>
         </div>
-
         <div className="px-5 py-4 space-y-3">
-          {tasksForCell.length === 0 ? (
-            <p className="text-stone-400 text-xs">Δεν έχουν καταχωρηθεί εργασίες για αυτή τη μέρα.</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {tasksForCell.map((t) => (
-                <li key={t.id} className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-md px-2.5 py-1.5">
-                  <span className="text-sm">
-                    <span className="mr-1.5">{taskBadges([t])}</span>
-                    <span className="text-stone-700">{TASK_LABELS[t.task_type] ?? t.task_type}</span>
-                  </span>
-                  {canEdit && (
-                    <button onClick={() => handleDelete(t.id)} className="text-rose-500 hover:text-rose-700">
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {canEdit && (
-            <div className="pt-2 border-t border-stone-200">
-              <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Προσθήκη εργασίας</label>
-              <div className="flex flex-col gap-2 mt-2">
-                <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasSheet ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
-                  <input
-                    type="checkbox"
-                    checked={sheetChecked}
-                    disabled={hasSheet}
-                    onChange={(e) => setSheetChecked(e.target.checked)}
-                    className="w-4 h-4 rounded border-stone-300"
-                  />
-                  <span>{'\u{1F7E5}'} Σεντόνια {hasSheet && '(ήδη προστέθηκε)'}</span>
-                </label>
-                <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasTowel ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
-                  <input
-                    type="checkbox"
-                    checked={towelChecked}
-                    disabled={hasTowel}
-                    onChange={(e) => setTowelChecked(e.target.checked)}
-                    className="w-4 h-4 rounded border-stone-300"
-                  />
-                  <span>{'\u{1F7E6}'} Πετσέτες {hasTowel && '(ήδη προστέθηκε)'}</span>
-                </label>
-              </div>
-              <button onClick={handleAdd} className="w-full mt-2 px-3 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
-                Προσθήκη
-              </button>
-              {error && <p className="text-rose-600 text-xs font-medium mt-1">{error}</p>}
+          {tasksForCell.length > 0 && <ul className="space-y-1.5">
+            {tasksForCell.map(t => <li key={t.id} className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-md px-2.5 py-1.5 text-sm">
+              <span>{t.task_type === 'sheet' ? '🔴 Σεντόνια' : t.task_type === 'towel' ? '🔵 Πετσέτες' : t.task_type}</span>
+              {canEdit && <button onClick={async () => { try { await deleteTask(t.id); await onRefresh(); } catch (err) { setError(err.message); } }} className="text-rose-500 hover:text-rose-700"><Trash2 size={13} /></button>}
+            </li>)}
+          </ul>}
+          {canEdit && <div className="pt-2 border-t border-stone-200">
+            <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Προσθήκη εργασίας</label>
+            <div className="flex flex-col gap-2 mt-2">
+              <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasSheet ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
+                <input type="checkbox" checked={sheetChecked} disabled={hasSheet} onChange={e => setSheetChecked(e.target.checked)} className="w-4 h-4 rounded border-stone-300" />
+                <span>🔴 Σεντόνια {hasSheet && '(ήδη προστέθηκε)'}</span>
+              </label>
+              <label className={`flex items-center gap-2 text-sm rounded-md border px-3 py-2 ${hasTowel ? 'border-stone-200 bg-stone-50 text-stone-400' : 'border-stone-300 text-stone-700 cursor-pointer'}`}>
+                <input type="checkbox" checked={towelChecked} disabled={hasTowel} onChange={e => setTowelChecked(e.target.checked)} className="w-4 h-4 rounded border-stone-300" />
+                <span>🔵 Πετσέτες {hasTowel && '(ήδη προστέθηκε)'}</span>
+              </label>
             </div>
-          )}
+            <button onClick={handleAdd} className="w-full mt-2 px-3 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">Προσθήκη</button>
+          </div>}
+          {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
         </div>
       </div>
     </div>
   );
 }
 
-function ChecklistSection({ items, isAdmin, currentUserId, onAdd, onDelete, onToggle }) {
-  const [newItem, setNewItem] = useState('');
-  const [error, setError] = useState('');
+function ChecklistDropdown({ checklist, items, isAdmin, currentUserId, onToggle, onAdd, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [roomId, setRoomId] = useState('');
+  const checkedCount = items.filter(item => Array.isArray(item.checks) && item.checks.length > 0).length;
 
-  function handleAdd() {
-    const trimmed = newItem.trim();
-    if (!trimmed) return;
-    setError('');
-    try {
-      onAdd(trimmed);
-      setNewItem('');
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Failed to add item.');
-    }
+  async function add() {
+    const value = roomId.trim();
+    if (!value || !/^\d+$/.test(value)) return;
+    await onAdd(Number(value));
+    setRoomId('');
   }
 
   return (
-    <div className="mt-2">
-      {items.length === 0 ? (
-        <p className="text-stone-400 text-xs">Δεν υπάρχουν εργασίες λίστας.</p>
-      ) : (
-        <ul className="space-y-1.5">
-          {items.map((item) => {
-            const checks = Array.isArray(item.checks) ? item.checks : [];
-            // Is this box checked by the currently logged-in user?
-            const isCheckedByMe = checks.some(c => c.user_id === currentUserId);
-
-            return (
-              <li key={item.id} className="flex items-start justify-between gap-2 bg-stone-50 border border-stone-200 rounded-md px-2.5 py-1.5">
-                <label className="flex items-start gap-2 text-sm flex-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isCheckedByMe}
-                    onChange={() => onToggle(item)}
-                    className="w-4 h-4 mt-0.5 rounded border-stone-300 flex-shrink-0 cursor-pointer"
-                  />
-                  <span className={isCheckedByMe ? 'text-stone-400 line-through' : 'text-stone-700'}>
-                    {item.content}
-                  </span>
-                </label>
-
-                {/* Show badges for ALL staff members who checked this box */}
-                <div className="flex items-center gap-1 flex-wrap flex-shrink-0 justify-end">
-                  {checks.map((chk, idx) => (
-                    <span
-                      key={chk.user_id || idx}
-                      title={chk.checked_at ? new Date(chk.checked_at).toLocaleString('el-GR') : ''}
-                      className={`text-[10px] font-mono font-semibold rounded px-1 ${
-                        chk.user_id === currentUserId 
-                          ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' 
-                          : 'bg-stone-200 text-stone-600'
-                      }`}
-                    >
-                      {chk.initials}
-                    </span>
-                  ))}
-
-                  {isAdmin && (
-                    <button onClick={() => onDelete(item.id)} className="text-rose-500 hover:text-rose-700 ml-1">
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {isAdmin && (
-        <div className="flex gap-2 mt-2">
-          <input
-            type="text"
-            value={newItem}
-            onChange={(e) => setNewItem(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAdd(); } }}
-            placeholder="Νέα εργασία λίστας..."
-            className="flex-1 border border-stone-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          />
-          <button onClick={handleAdd} className="px-3 py-1.5 text-xs font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800">
-            Προσθήκη
-          </button>
-        </div>
-      )}
-      {error && <p className="text-rose-600 text-xs font-medium mt-1">{error}</p>}
+    <div className="border border-stone-200 rounded-lg overflow-hidden bg-white">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-stone-50">
+        <span className="flex items-center gap-2 text-sm font-semibold text-stone-800"><span className="w-6 h-6 rounded-md bg-stone-900 text-amber-300 flex items-center justify-center text-xs">{checklist.icon}</span>{checklist.label}</span>
+        <span className="flex items-center gap-2 text-xs text-stone-500"><span>{items.length} δωμάτια{checkedCount ? ` · ${checkedCount} ✓` : ''}</span><span>{open ? '▴' : '▾'}</span></span>
+      </button>
+      {open && <div className="border-t border-stone-200 p-2 space-y-1.5">
+        {items.length === 0 ? <p className="text-xs text-stone-400 px-1 py-1">Δεν υπάρχουν δωμάτια.</p> : items.map(item => {
+          const checks = Array.isArray(item.checks) ? item.checks : [];
+          const mine = checks.some(c => c.user_id === currentUserId);
+          return <div key={item.id} className="flex items-center gap-2 bg-stone-50 border border-stone-200 rounded-md px-2.5 py-2">
+            <input type="checkbox" checked={mine} onChange={() => onToggle(item)} className="w-4 h-4 rounded border-stone-300 cursor-pointer" />
+            <span className={`font-mono text-sm flex-1 ${mine ? 'line-through text-stone-400' : 'text-stone-700'}`}>{item.content}</span>
+            <div className="flex gap-1 flex-wrap justify-end">
+              {checks.map((check, idx) => <span key={check.user_id || idx} title={check.checked_at ? new Date(check.checked_at).toLocaleString('el-GR') : ''} className={`text-[10px] font-mono font-semibold rounded px-1 ${check.user_id === currentUserId ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-stone-200 text-stone-600'}`}>{check.initials}</span>)}
+            </div>
+            {isAdmin && <button onClick={() => onDelete(item)} className="text-rose-500 hover:text-rose-700"><Trash2 size={12} /></button>}
+          </div>;
+        })}
+        {isAdmin && <div className="flex gap-2 pt-1">
+          <input value={roomId} onChange={e => setRoomId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} inputMode="numeric" placeholder="Room ID" className="flex-1 border border-stone-300 rounded-md px-2.5 py-1.5 text-sm" />
+          <button onClick={add} className="px-3 py-1.5 text-xs font-medium bg-stone-900 text-white rounded-md">Προσθήκη</button>
+        </div>}
+      </div>}
     </div>
   );
 }
 
-function DayNoteModal({ date, karayiannisNote, christinaNote, karayiannisChecklist, christinaChecklist, isAdmin, canEdit, initials, userId, onSaveNote, onSaveChecklists, onClose }) {
+function DayNoteModal({ date, karayiannisNote, christinaNote, checklistItems, isAdmin, userId, initials, onSaveNote, onToggleChecklist, onAddChecklist, onDeleteChecklist, onClose }) {
   const [karayiannisText, setKarayiannisText] = useState(karayiannisNote || '');
   const [christinaText, setChristinaText] = useState(christinaNote || '');
-
-  // Helper to standardise old DB format (single check) into array format
-  const normalizeList = (list) => list.map(item => {
-    if (Array.isArray(item.checks)) return item;
-    const legacy = [];
-    if (item.checked && item.checked_by) {
-      legacy.push({ user_id: item.checked_by_id || 'legacy', initials: item.checked_by, checked_at: item.checked_at });
-    }
-    return { ...item, checks: legacy };
-  });
-
-  const [kChecklist, setKChecklist] = useState(() => normalizeList(karayiannisChecklist));
-  const [cChecklist, setCChecklist] = useState(() => normalizeList(christinaChecklist));
-  const [deletedIds, setDeletedIds] = useState([]);
-  
-  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  
-  const dateObj = parseISO(date);
-  const label = dateObj.toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const label = parseISO(date).toLocaleDateString('el-GR', { weekday: 'long', day: 'numeric', month: 'long' });
 
-  const handleAddLocal = (villa, content) => {
-    const newItem = { id: `temp-${uid()}`, content, checks: [], isNew: true, villa, note_date: date };
-    if (villa === 'karayiannis') setKChecklist([...kChecklist, newItem]);
-    else setCChecklist([...cChecklist, newItem]);
-  };
-
-  const handleToggleLocal = (villa, item) => {
-    const updater = (list) => list.map(i => {
-      if (i.id === item.id) {
-        const currentChecks = Array.isArray(i.checks) ? i.checks : [];
-        const existingIdx = currentChecks.findIndex(c => c.user_id === userId);
-
-        let updatedChecks;
-        if (existingIdx >= 0) {
-          // Toggle off: remove user's entry
-          updatedChecks = currentChecks.filter(c => c.user_id !== userId);
-        } else {
-          // Toggle on: add user's entry
-          updatedChecks = [
-            ...currentChecks,
-            { user_id: userId, initials: initials, checked_at: new Date().toISOString() }
-          ];
-        }
-
-        return {
-          ...i,
-          checks: updatedChecks,
-          isModified: !i.isNew
-        };
-      }
-      return i;
-    });
-    
-    if (villa === 'karayiannis') setKChecklist(updater(kChecklist));
-    else setCChecklist(updater(cChecklist));
-  };
-
-  const handleDeleteLocal = (villa, id) => {
-    if (!String(id).startsWith('temp-')) {
-      setDeletedIds([...deletedIds, id]);
-    }
-    if (villa === 'karayiannis') setKChecklist(kChecklist.filter(i => i.id !== id));
-    else setCChecklist(cChecklist.filter(i => i.id !== id));
-  };
-
-  async function handleSave() {
-    setError('');
+  async function saveNotes() {
     setSaving(true);
     try {
-      if (canEdit) {
-        await onSaveNote('karayiannis', karayiannisText);
-        await onSaveNote('christina', christinaText);
-      }
-      
-      const allItems = [...kChecklist, ...cChecklist];
-      const newItems = allItems.filter(i => i.isNew);
-      const modifiedItems = allItems.filter(i => i.isModified);
-      
-      await onSaveChecklists(newItems, modifiedItems, deletedIds);
-      
+      await onSaveNote('karayiannis', karayiannisText);
+      await onSaveNote('christina', christinaText);
       onClose();
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to save note.');
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
+
+  const grouped = CHECKLISTS.map(checklist => ({
+    checklist,
+    items: checklistItems.filter(item => item.villa === checklist.key).sort((a, b) => Number(a.content) - Number(b.content))
+  }));
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-stone-200">
-          <div>
-            <h2 className="font-serif text-lg font-semibold text-stone-900">Σημειώσεις της ημέρας</h2>
-            <p className="text-xs text-stone-500 font-mono mt-0.5 capitalize">{label}</p>
-          </div>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
-            <X size={20} />
-          </button>
+          <div><h2 className="font-serif text-lg font-semibold text-stone-900">Σημειώσεις της ημέρας</h2><p className="text-xs text-stone-500 font-mono mt-0.5 capitalize">{label}</p></div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700"><X size={20} /></button>
         </div>
-
         <div className="px-5 py-4 space-y-4">
-          {canEdit ? (
-            <>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</label>
-                <textarea
-                  rows={4}
-                  value={karayiannisText}
-                  onChange={(e) => setKarayiannisText(e.target.value)}
-                  placeholder="Σημειώσεις για τα Karayiannis Villas..."
-                  className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</label>
-                <textarea
-                  rows={4}
-                  value={christinaText}
-                  onChange={(e) => setChristinaText(e.target.value)}
-                  placeholder="Σημειώσεις για τη Villa Christina..."
-                  className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</span>
-                <p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">
-                  {karayiannisNote && karayiannisNote.trim() ? karayiannisNote : 'Δεν υπάρχουν σημειώσεις.'}
-                </p>
-              </div>
-              <div className="pt-3 border-t border-stone-200">
-                <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</span>
-                <p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">
-                  {christinaNote && christinaNote.trim() ? christinaNote : 'Δεν υπάρχουν σημειώσεις.'}
-                </p>
-              </div>
-            </>
-          )}
+          {isAdmin ? <>
+            <div><label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</label><textarea rows={3} value={karayiannisText} onChange={e => setKarayiannisText(e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1" /></div>
+            <div><label className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</label><textarea rows={3} value={christinaText} onChange={e => setChristinaText(e.target.value)} className="w-full border border-stone-300 rounded-md px-3 py-2 text-sm mt-1" /></div>
+          </> : <>
+            <div><span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Karayiannis Villas</span><p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">{karayiannisNote?.trim() || 'Δεν υπάρχουν σημειώσεις.'}</p></div>
+            <div className="pt-3 border-t border-stone-200"><span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Villa Christina</span><p className="text-sm text-stone-700 whitespace-pre-wrap mt-1">{christinaNote?.trim() || 'Δεν υπάρχουν σημειώσεις.'}</p></div>
+          </>}
 
-          {/* CHECKLISTS */}
-          <div className="mt-2 pt-2 border-t border-stone-100">
-            <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Λίστα εργασιών (Karayiannis)</span>
-            <ChecklistSection
-              items={kChecklist}
-              isAdmin={isAdmin}
-              currentUserId={userId}
-              onAdd={(content) => handleAddLocal('karayiannis', content)}
-              onDelete={(id) => handleDeleteLocal('karayiannis', id)}
-              onToggle={(item) => handleToggleLocal('karayiannis', item)}
-            />
-          </div>
-          <div className="mt-2 pt-2 border-t border-stone-100">
-            <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Λίστα εργασιών (Christina)</span>
-            <ChecklistSection
-              items={cChecklist}
-              isAdmin={isAdmin}
-              currentUserId={userId}
-              onAdd={(content) => handleAddLocal('christina', content)}
-              onDelete={(id) => handleDeleteLocal('christina', id)}
-              onToggle={(item) => handleToggleLocal('christina', item)}
-            />
+          <div className="pt-3 border-t border-stone-200">
+            <div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold uppercase tracking-wide text-stone-500">Checklists</span><span className="text-[10px] text-stone-400">Τα δεδομένα συγχρονίζονται με το board</span></div>
+            <div className="space-y-2">
+              {grouped.map(({ checklist, items }) => <ChecklistDropdown
+                key={checklist.key}
+                checklist={checklist}
+                items={items}
+                isAdmin={isAdmin}
+                currentUserId={userId}
+                onToggle={item => onToggleChecklist(item, userId, initials)}
+                onAdd={roomId => onAddChecklist(date, checklist.key, roomId)}
+                onDelete={item => onDeleteChecklist(item)}
+              />)}
+            </div>
           </div>
 
-          {error && <p className="text-rose-600 text-xs font-medium">{error}</p>}
-          
-          <div className="flex justify-end gap-2">
-            <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
-              Ακύρωση
-            </button>
-            <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md hover:bg-stone-800 disabled:opacity-50">
-              Αποθήκευση
-            </button>
-          </div>
+          {isAdmin && <div className="flex justify-end gap-2 pt-2"><button onClick={onClose} className="px-4 py-2 text-sm text-stone-600">Ακύρωση</button><button onClick={saveNotes} disabled={saving} className="px-4 py-2 text-sm font-medium bg-stone-900 text-white rounded-md disabled:opacity-50">{saving ? 'Αποθήκευση…' : 'Αποθήκευση'}</button></div>}
         </div>
       </div>
     </div>
@@ -875,7 +714,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  
+
   const [rooms, setRooms] = useState(defaultRooms);
   const [stays, setStays] = useState([]);
 
@@ -883,10 +722,9 @@ export default function App() {
   const [dayNotes, setDayNotes] = useState([]);
   const [checklistItems, setChecklistItems] = useState([]);
 
-  // HERE ARE THE MISSING FUNCTIONS
   const hasAnyNote = (dateISO) => {
     const hasTextNote = dayNotes.some(n => n.note_date === dateISO && n.note && n.note.trim() !== '');
-    const hasChecklist = checklistItems.some(c => c.note_date === dateISO);
+    const hasChecklist = checklistItems.some(c => c.note_date === dateISO && CHECKLIST_KEYS.has(c.villa));
     return hasTextNote || hasChecklist;
   };
 
@@ -895,11 +733,7 @@ export default function App() {
     return n ? n.note : '';
   };
 
-  const checklistFor = (dateISO, villa) => {
-    return checklistItems
-      .filter(c => c.note_date === dateISO && c.villa === villa)
-      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
-  };
+  const checklistForDate = (dateISO) => checklistItems.filter(c => c.note_date === dateISO && CHECKLIST_KEYS.has(c.villa));
 
   const role = profile?.role ?? "";
 
@@ -911,7 +745,7 @@ export default function App() {
   const canEdit = isAdmin;
   const canDelete = isAdmin;
   const canManageTasks = isAdmin;
-  
+
   const [viewStart, setViewStart] = useState(() => addDays(startOfDay(new Date()), -7));
   const [mobileDate, setMobileDate] = useState(() => toISO(new Date()));
   const [mobileViewMode, setMobileViewMode] = useState('list');
@@ -930,8 +764,21 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // NOTE: syncAutomaticChecklists depends on `rooms` (see its useCallback below), and this
+  // function calls it. Because loadData's own dependency array is [], loadData is created once
+  // on mount and forever calls the *first* version of syncAutomaticChecklists - closed over the
+  // initial `rooms` value. If `rooms` is later replaced by data loaded from storage, the sync
+  // step will keep using the stale initial room list. This was true in the original file too;
+  // flagging it here since it won't throw and is easy to miss. Fix properly by dropping
+  // useCallback on syncAutomaticChecklists or tracking rooms via a ref.
   const loadData = useCallback(async () => {
     setSyncing(true);
+
+    // Hoisted out of the try blocks below (was previously declared with `const` inside each
+    // try block, which made them fall out of scope by the time syncAutomaticChecklists needed
+    // them, throwing "staysRaw is not defined").
+    let staysRaw = [];
+    let taskData = [];
 
     try {
       const roomsRaw = await safeGet(ROOMS_KEY, true);
@@ -942,7 +789,7 @@ export default function App() {
 
       if (error) throw error;
 
-      const staysRaw = data.map(dbToStay);
+      staysRaw = data.map(dbToStay);
 
       let r = roomsRaw ? JSON.parse(roomsRaw) : null;
       let ok = true;
@@ -962,12 +809,13 @@ export default function App() {
     }
 
     try {
-      const { data: taskData, error: taskError } = await supabase
+      const { data: taskRows, error: taskError } = await supabase
         .from("housekeeping_tasks")
         .select("*");
 
       if (taskError) throw taskError;
-      setTasks(taskData ?? []);
+      taskData = taskRows ?? [];
+      setTasks(taskData);
     } catch (err) {
       console.error('Failed to load housekeeping tasks:', err);
     }
@@ -989,7 +837,8 @@ export default function App() {
         .select("*");
 
       if (checklistError) throw checklistError;
-      setChecklistItems(checklistData ?? []);
+      setChecklistItems((checklistData ?? []).filter(item => CHECKLIST_KEYS.has(item.villa)));
+      try { await syncAutomaticChecklists(staysRaw, taskData); } catch (syncError) { console.error("Failed to sync automatic checklists:", syncError); }
     } catch (err) {
       console.error('Failed to load checklist items:', err);
     } finally {
@@ -1106,6 +955,71 @@ export default function App() {
     loadProfile();
   }, [user]);
 
+  async function refreshChecklistData() {
+    const { data, error } = await supabase
+      .from('day_checklist_items')
+      .select('*')
+      .in('villa', Array.from(CHECKLIST_KEYS));
+    if (error) throw error;
+    setChecklistItems(data ?? []);
+  }
+
+  async function addChecklistFromAdmin(dateISO, checklistKey, roomId) {
+    if (!isAdmin || !CHECKLIST_KEYS.has(checklistKey)) return;
+    const item = await insertChecklistRoom(dateISO, checklistKey, roomId);
+    await mirrorChecklistToBoard(item, tasks);
+    await refreshChecklistData();
+    await loadData();
+  }
+
+  async function toggleChecklist(item, userId, initials) {
+    await updateChecklistChecks(item.id, userId, initials);
+    await refreshChecklistData();
+  }
+
+  async function deleteChecklist(item) {
+    if (!isAdmin) return;
+    await removeChecklistAndMirror(item, tasks);
+    await refreshChecklistData();
+    await loadData();
+  }
+
+  // Rebuild only missing automatic entries. Existing entries (including admin-created ones)
+  // are preserved so an admin can remove a checklist entry without it being recreated blindly.
+  const syncAutomaticChecklists = useCallback(async (nextStays, nextTasks) => {
+    const dates = new Set();
+    nextStays.forEach(stay => {
+      dates.add(stay.checkIn);
+      dates.add(stay.checkOut);
+      let d = parseISO(stay.checkIn);
+      const end = parseISO(stay.checkOut);
+      while (d < end) { dates.add(toISO(d)); d = addDays(d, 1); }
+    });
+    nextTasks.forEach(task => dates.add(task.task_date));
+    if (!dates.size) return;
+
+    const { data: existing, error } = await supabase
+      .from('day_checklist_items')
+      .select('id,note_date,villa,content,checks')
+      .in('villa', Array.from(CHECKLIST_KEYS));
+    if (error) throw error;
+
+    const existingSet = new Set((existing ?? []).map(i => `${i.note_date}|${i.villa}|${i.content}`));
+    const inserts = [];
+    for (const date of dates) {
+      for (const room of rooms) {
+        for (const key of deriveChecklistKeysForRoom(nextStays, nextTasks, room.id, date)) {
+          const token = `${date}|${key}|${room.id}`;
+          if (!existingSet.has(token)) inserts.push({ note_date: date, villa: key, content: String(room.id), checks: [] });
+        }
+      }
+    }
+    if (inserts.length) {
+      const { error: insertError } = await supabase.from('day_checklist_items').insert(inserts);
+      if (insertError) throw insertError;
+    }
+  }, [rooms]);
+
   function openAddModal(roomId, dateISO) {
     if (!canCreate) return;
     setModal({
@@ -1174,7 +1088,7 @@ export default function App() {
   }
 
   const isMobile = windowWidth < 700;
-  
+
   const todayForGrid = startOfDay(new Date());
   const todayISO = toISO(todayForGrid);
 
@@ -1256,7 +1170,7 @@ export default function App() {
               )}
           </div>
         </header>
-            
+
         <div className="flex flex-wrap items-center gap-4 mb-3 text-[11px] sm:text-xs text-stone-600">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-600 inline-block" /> Κατειλημμένο</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400 inline-block" /> Κλεισμένο</span>
@@ -1273,8 +1187,6 @@ export default function App() {
             <button onClick={() => setMobileViewMode('grid')} className={`px-3 py-1.5 text-xs font-semibold ${mobileViewMode === 'grid' ? 'bg-stone-900 text-white' : 'bg-white text-stone-600'}`}>Πλέγμα</button>
           </div>
         )}
-
-        
 
         {isMobile && mobileViewMode === 'list' ? (
           <MobileDayList
@@ -1534,6 +1446,7 @@ export default function App() {
           tasks={tasks}
           canEdit={canManageTasks}
           onClose={closeTaskModal}
+          onRefresh={loadData}
         />
       )}
 
@@ -1542,14 +1455,14 @@ export default function App() {
           date={dayNoteModalDate}
           karayiannisNote={noteFor(dayNoteModalDate, 'karayiannis')}
           christinaNote={noteFor(dayNoteModalDate, 'christina')}
-          karayiannisChecklist={checklistFor(dayNoteModalDate, 'karayiannis')}
-          christinaChecklist={checklistFor(dayNoteModalDate, 'christina')}
+          checklistItems={checklistForDate(dayNoteModalDate)}
           isAdmin={isAdmin}
-          canEdit={isAdmin}
           initials={initialsFor(profile)}
           userId={user.id}
           onSaveNote={(villa, text) => saveDayNote(dayNoteModalDate, villa, text)}
-          onSaveChecklists={saveChecklistBatch}
+          onToggleChecklist={toggleChecklist}
+          onAddChecklist={addChecklistFromAdmin}
+          onDeleteChecklist={deleteChecklist}
           onClose={() => setDayNoteModalDate(null)}
         />
       )}
